@@ -21,7 +21,7 @@ func TestCatalogMigrationPreservesFoundationAndUnconfiguredIdentity(t *testing.T
 		t.Fatal(err)
 	}
 	defer conn.Close(t.Context())
-	for _, table := range []string{"app.restaurant_settings", "app.menu_items"} {
+	for _, table := range []string{"app.restaurant_settings", "app.menu_items", "app.operations"} {
 		var exists bool
 		if err := conn.QueryRow(t.Context(), "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("catalog migration missing %s: exists=%v err=%v", table, exists, err)
@@ -51,11 +51,11 @@ func TestCatalogMigrationPreservesFoundationAndUnconfiguredIdentity(t *testing.T
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("rerun changed durable event: before=%+v after=%+v err=%v", before, after, err)
 	}
-	var identities, settings, items int
-	if err := conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM app.restaurants), (SELECT count(*) FROM app.restaurant_settings), (SELECT count(*) FROM app.menu_items)").Scan(&identities, &settings, &items); err != nil {
+	var identities, settings, items, operations int
+	if err := conn.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM app.restaurants), (SELECT count(*) FROM app.restaurant_settings), (SELECT count(*) FROM app.menu_items), (SELECT count(*) FROM app.operations)").Scan(&identities, &settings, &items, &operations); err != nil {
 		t.Fatal(err)
 	}
-	if identities != 1 || settings != 0 || items != 0 {
-		t.Fatalf("migration created operational defaults: identities=%d settings=%d items=%d", identities, settings, items)
+	if identities != 1 || settings != 0 || items != 0 || operations != 0 {
+		t.Fatalf("migration created operational defaults: identities=%d settings=%d items=%d operations=%d", identities, settings, items, operations)
 	}
 }

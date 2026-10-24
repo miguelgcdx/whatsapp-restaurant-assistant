@@ -101,7 +101,8 @@ func validate(settings Settings, items []Item) error {
 
 // Initialize is atomic and create-only. Versions are output state: nonnegative
 // input versions are ignored and new rows always start at zero. Retry comparison
-// excludes availability/version so staff changes can never be reset by setup.
+// excludes mutable open/version and item availability/version, so setup can
+// never reset staff changes.
 func (s *Store) Initialize(ctx context.Context, settings Settings, items []Item) error {
 	if err := validate(settings, items); err != nil {
 		return err
@@ -124,6 +125,7 @@ func (s *Store) Initialize(ctx context.Context, settings Settings, items []Item)
 	case err == nil:
 		fixed := settings
 		fixed.Version = stored.Version
+		fixed.Open = stored.Open
 		if fixed != stored {
 			return ErrConflict
 		}
@@ -227,11 +229,16 @@ func (s *Store) SetAvailability(ctx context.Context, itemID string, expectedVers
 	if err != nil || expectedVersion < 0 {
 		return Item{}, ErrInput
 	}
+	return setAvailability(ctx, s.pool, s.restaurant, id, expectedVersion, available)
+}
+
+// setAvailability is the shared CAS for legacy and transactional callers.
+func setAvailability(ctx context.Context, q reader, restaurant, id pgtype.UUID, expectedVersion int64, available bool) (Item, error) {
 	if expectedVersion == math.MaxInt64 {
 		return Item{}, ErrStale
 	}
 	var item Item
-	err = s.pool.QueryRow(ctx, "UPDATE app.menu_items SET available=$1,version=version+1 WHERE restaurant_id=$2 AND id=$3 AND version=$4 RETURNING id::text,name,price_minor,currency,available,version", available, s.restaurant, id, expectedVersion).Scan(&item.ID, &item.Name, &item.PriceMinor, &item.Currency, &item.Available, &item.Version)
+	err := q.QueryRow(ctx, "UPDATE app.menu_items SET available=$1,version=version+1 WHERE restaurant_id=$2 AND id=$3 AND version=$4 RETURNING id::text,name,price_minor,currency,available,version", available, restaurant, id, expectedVersion).Scan(&item.ID, &item.Name, &item.PriceMinor, &item.Currency, &item.Available, &item.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrStale
 	}

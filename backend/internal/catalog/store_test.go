@@ -151,8 +151,16 @@ func TestCatalogLifecycle(t *testing.T) {
 		{"uuid", func(_ *catalog.Settings, m *[]catalog.Item) { (*m)[0].ID = "bad" }, catalog.ErrInput},
 		{"mismatch", func(_ *catalog.Settings, m *[]catalog.Item) { (*m)[0].Currency = "EUR" }, catalog.ErrInput},
 		{"duplicate", func(_ *catalog.Settings, m *[]catalog.Item) { (*m)[1].ID = (*m)[0].ID }, catalog.ErrInput},
-		{"fixed settings", func(s *catalog.Settings, _ *[]catalog.Item) { s.Open = false }, catalog.ErrConflict},
+		{"fixed settings", func(s *catalog.Settings, _ *[]catalog.Item) { s.FlatFeeMinor++ }, catalog.ErrConflict},
 		{"fixed price", func(_ *catalog.Settings, m *[]catalog.Item) { (*m)[0].PriceMinor++ }, catalog.ErrConflict},
+		{"fixed name", func(_ *catalog.Settings, m *[]catalog.Item) { (*m)[0].Name = "Renamed" }, catalog.ErrConflict},
+		{"fixed exponent", func(s *catalog.Settings, _ *[]catalog.Item) { s.CurrencyExponent = 3 }, catalog.ErrConflict},
+		{"fixed currency", func(s *catalog.Settings, m *[]catalog.Item) {
+			s.Currency = "EUR"
+			for i := range *m {
+				(*m)[i].Currency = "EUR"
+			}
+		}, catalog.ErrConflict},
 		{"partial retry", func(_ *catalog.Settings, m *[]catalog.Item) { *m = (*m)[:1] }, catalog.ErrConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
