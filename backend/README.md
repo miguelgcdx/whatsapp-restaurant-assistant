@@ -174,4 +174,6 @@ manage your own fixture data; these instructions do not delete directories.
 Unknown sends are never blindly retried and require future reconciliation.
 Generations fence database completion, not a request already in flight. There
 is no exactly-once external-delivery guarantee, free-tier uptime guarantee,
-business ordering workflow, dashboard, model or authentication integration.
+business ordering workflow or model integration in this pipeline. The separate
+[local staff authentication/access boundary](docs/staff.md) has its own setup,
+authority and verification limits; it does not add order workflows.

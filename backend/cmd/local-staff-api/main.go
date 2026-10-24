@@ -1,0 +1,104 @@
+// local-staff-api serves the loopback-only staff access boundary, never migrations.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"restaurant-assistant/backend/internal/staff"
+)
+
+const apiHelp = `Usage: local-staff-api [-listen 127.0.0.1:8081]
+  -listen ADDRESS numeric-loopback HTTP host:port (port 0–65535)
+Required environment: LOCAL_DATABASE_URL, LOCAL_RESTAURANT_ID,
+STAFF_JWT_ISSUER, STAFF_JWKS_URL (fixed /api/auth/jwks).
+GET /v1/staff/access requires an EdDSA bearer token and current membership.
+No migrations or runtime fixture provisioning. Errors are redacted.
+`
+
+func run(ctx context.Context, args []string, getenv func(string) string) error {
+	fs := flag.NewFlagSet("local-staff-api", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	listen := fs.String("listen", "127.0.0.1:8081", "")
+	if e := fs.Parse(args); e != nil {
+		return e
+	}
+	if fs.NArg() != 0 {
+		return staff.ErrInput
+	}
+	host, port, e := net.SplitHostPort(*listen)
+	ip := net.ParseIP(host)
+	n, pe := strconv.Atoi(port)
+	if e != nil || ip == nil || !ip.IsLoopback() || pe != nil || n < 0 || n > 65535 {
+		return staff.ErrInput
+	}
+	restaurant := getenv("LOCAL_RESTAURANT_ID")
+	v, e := staff.NewVerifier(getenv("STAFF_JWT_ISSUER"), getenv("STAFF_JWKS_URL"))
+	if e != nil {
+		return e
+	}
+	store, e := staff.OpenStore(ctx, getenv("LOCAL_DATABASE_URL"), restaurant)
+	if e != nil {
+		return e
+	}
+	defer store.Close()
+	h, e := staff.NewHandler(store, restaurant, v)
+	if e != nil {
+		return e
+	}
+	listener, e := net.Listen("tcp", *listen)
+	if e != nil {
+		return staff.ErrUnavailable
+	}
+	server := &http.Server{Handler: h, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, BaseContext: func(net.Listener) context.Context { return ctx }}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case e := <-served:
+		if errors.Is(e, http.ErrServerClosed) {
+			return nil
+		}
+		return staff.ErrUnavailable
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		e := server.Shutdown(shutdown)
+		if e != nil {
+			_ = server.Close()
+		}
+		<-served
+		if e != nil {
+			return staff.ErrUnavailable
+		}
+		return nil
+	}
+}
+func execute(ctx context.Context, args []string, getenv func(string) string, out, errout io.Writer) int {
+	e := run(ctx, args, getenv)
+	if errors.Is(e, flag.ErrHelp) {
+		_, _ = io.WriteString(out, apiHelp)
+		return 0
+	}
+	if e != nil {
+		_, _ = fmt.Fprintln(errout, "Staff API could not be completed.")
+		return 1
+	}
+	return 0
+}
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	code := execute(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}
