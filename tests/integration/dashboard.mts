@@ -385,7 +385,7 @@ try {
     `${origin}/api/staff/catalog`,
   );
   assert.equal(catalogBefore.status(), 200);
-  const baseline = catalogSchema.parse(await catalogBefore.json()).data;
+  let baseline = catalogSchema.parse(await catalogBefore.json()).data;
   await catalogPage
     .getByRole("link", { name: "Next page", exact: true })
     .click();
@@ -448,6 +448,299 @@ try {
     "PASS real catalog, exact prices, current-page traversal/start-again and unchanged rejected reads",
   );
 
+  stage = "availability controls, conflict and uncertain commit recovery";
+  // Register owned session-cookie values for failure redaction before transport injection.
+  for (const context of contexts) await cookieHeaders(context);
+  const readCatalog = async () => {
+    const response = await alexOther.request.get(catalogAPI);
+    assert.equal(response.status(), 200);
+    return catalogSchema.parse(await response.json()).data;
+  };
+  const itemID = baseline.items[0]?.id;
+  assert(itemID);
+  const itemWriteURL = `${catalogAPI}/items/${itemID}/availability`;
+  const restaurantWriteURL = `${origin}/api/staff/restaurant/availability`;
+  const write = (
+    context: BrowserContext,
+    url: string,
+    key: string,
+    body: string,
+  ) =>
+    context.request.patch(url, {
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "idempotency-key": key,
+      },
+      data: body,
+    });
+  const bowl = catalogPage.getByRole("listitem").filter({
+    has: catalogPage.getByRole("heading", {
+      name: "Fictional bowl",
+      exact: true,
+    }),
+  });
+  const restaurantControl = catalogPage.getByRole("region", {
+    name: "Restaurant availability control",
+    exact: true,
+  });
+  await bowl
+    .getByRole("button", { name: "Mark unavailable", exact: true })
+    .click();
+  await expect(
+    bowl.getByRole("button", { name: "Mark available", exact: true }),
+  ).toBeEnabled();
+  await expect(bowl.getByText("Unavailable", { exact: true })).toBeVisible();
+  await restaurantControl
+    .getByRole("button", { name: "Close restaurant", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByText("Restaurant is closed.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    restaurantControl.getByRole("button", {
+      name: "Open restaurant",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  let current = await readCatalog();
+  assert.equal(
+    current.items[0]?.version,
+    (BigInt(baseline.items[0]?.version ?? "0") + BigInt(1)).toString(),
+  );
+  assert.equal(
+    current.restaurant.version,
+    (BigInt(baseline.restaurant.version) + BigInt(1)).toString(),
+  );
+  assert.deepEqual(
+    current.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+    })),
+    baseline.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+    })),
+  );
+
+  // Real BFF -> Go commit, then lose only its browser response once.
+  const beforeUnknown = current.items[0];
+  assert(beforeUnknown);
+  let lost: { key: string; body: string } | undefined;
+  let lostAttempts = 0;
+  await catalogPage.route(itemWriteURL, async (route) => {
+    lostAttempts++;
+    const request = route.request();
+    const key = request.headers()["idempotency-key"];
+    const body = request.postData();
+    assert(key && body);
+    lost = { key, body };
+    const committed = await route.fetch({ maxRetries: 0, maxRedirects: 0 });
+    assert.equal(committed.status(), 200);
+    await route.abort("failed");
+  });
+  await bowl
+    .getByRole("button", { name: "Mark available", exact: true })
+    .click();
+  await expect(bowl.getByRole("status")).toHaveText(
+    "The result is uncertain. Retry the same request; do not start a new change.",
+  );
+  assert(lost);
+  assert.equal(
+    (await readCatalog()).items[0]?.version,
+    (BigInt(beforeUnknown.version) + BigInt(1)).toString(),
+  );
+  // A sibling authoritative refresh must not discard or rewrite this intent.
+  await restaurantControl
+    .getByRole("button", { name: "Open restaurant", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByText("Restaurant is open.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    bowl.getByRole("button", { name: "Retry same request", exact: true }),
+  ).toBeVisible();
+  assert.equal(lostAttempts, 1);
+  await catalogPage.unroute(itemWriteURL);
+  const retriedRequest = catalogPage.waitForRequest(
+    (request) => request.url() === itemWriteURL && request.method() === "PATCH",
+  );
+  await bowl
+    .getByRole("button", { name: "Retry same request", exact: true })
+    .click();
+  const retry = await retriedRequest;
+  assert.equal(retry.headers()["idempotency-key"], lost.key);
+  assert.equal(retry.postData(), lost.body);
+  await expect(
+    bowl.getByRole("button", { name: "Mark unavailable", exact: true }),
+  ).toBeEnabled();
+  current = await readCatalog();
+  assert.equal(
+    current.items[0]?.version,
+    (BigInt(beforeUnknown.version) + BigInt(1)).toString(),
+  );
+  assert.equal(current.items[0]?.available, true);
+
+  // A stale rendered control must conflict, not overwrite the public API winner.
+  const stale = current.items[0];
+  assert(stale);
+  const staleWinner = await write(
+    sam,
+    itemWriteURL,
+    randomUUID(),
+    JSON.stringify({ expected_version: stale.version, available: false }),
+  );
+  assert.equal(staleWinner.status(), 200);
+  const afterWinner = await readCatalog();
+  const conflictRequest = catalogPage.waitForRequest(
+    (request) => request.url() === itemWriteURL && request.method() === "PATCH",
+  );
+  await bowl
+    .getByRole("button", { name: "Mark unavailable", exact: true })
+    .click();
+  await expect(bowl.getByRole("status")).toHaveText(
+    "Availability changed or this key was already used. Review the refreshed availability before a new change.",
+  );
+  assert.deepEqual(await readCatalog(), afterWinner);
+  const staleRequest = await conflictRequest;
+  const review = bowl.getByRole("button", {
+    name: "Review refreshed availability",
+    exact: true,
+  });
+  await expect(review).toBeEnabled();
+  await review.click();
+  await expect(
+    bowl.getByRole("button", { name: "Mark available", exact: true }),
+  ).toBeEnabled();
+  const newRequest = catalogPage.waitForRequest(
+    (request) => request.url() === itemWriteURL && request.method() === "PATCH",
+  );
+  await bowl
+    .getByRole("button", { name: "Mark available", exact: true })
+    .click();
+  const deliberate = await newRequest;
+  assert.notEqual(
+    deliberate.headers()["idempotency-key"],
+    staleRequest.headers()["idempotency-key"],
+  );
+  assert.deepEqual(JSON.parse(deliberate.postData() ?? "null"), {
+    expected_version: afterWinner.items[0]?.version,
+    available: true,
+  });
+  await expect(
+    bowl.getByRole("button", { name: "Mark unavailable", exact: true }),
+  ).toBeEnabled();
+
+  stage = "public BFF duplicate and competing intents";
+  current = await readCatalog();
+  const duplicateVersion = current.restaurant.version;
+  const duplicateBody = JSON.stringify({
+    expected_version: duplicateVersion,
+    open: true,
+  });
+  const duplicateKey = randomUUID();
+  const duplicates = await Promise.all([
+    write(alexOther, restaurantWriteURL, duplicateKey, duplicateBody),
+    write(alexOther, restaurantWriteURL, duplicateKey, duplicateBody),
+  ]);
+  assert.deepEqual(
+    duplicates.map((response) => response.status()),
+    [200, 200],
+  );
+  const duplicatePayloads = await Promise.all(
+    duplicates.map((response) => response.text()),
+  );
+  assert.equal(duplicatePayloads[0], duplicatePayloads[1]);
+  const afterDuplicate = await readCatalog();
+  assert.equal(
+    afterDuplicate.restaurant.version,
+    (BigInt(duplicateVersion) + BigInt(1)).toString(),
+  );
+  assert.equal(
+    (
+      await write(
+        alexOther,
+        restaurantWriteURL,
+        duplicateKey,
+        JSON.stringify({ expected_version: duplicateVersion, open: false }),
+      )
+    ).status(),
+    409,
+  );
+  assert.deepEqual(await readCatalog(), afterDuplicate);
+  const raceBody = JSON.stringify({
+    expected_version: afterDuplicate.restaurant.version,
+    open: false,
+  });
+  const race = await Promise.all([
+    write(alexOther, restaurantWriteURL, randomUUID(), raceBody),
+    write(alexOther, restaurantWriteURL, randomUUID(), raceBody),
+  ]);
+  assert.deepEqual(
+    race.map((response) => response.status()).sort(),
+    [200, 409],
+  );
+  current = await readCatalog();
+  assert.equal(
+    current.restaurant.version,
+    (BigInt(afterDuplicate.restaurant.version) + BigInt(1)).toString(),
+  );
+  assert.equal(current.restaurant.open, false);
+  const historicalReplay = await write(
+    alexOther,
+    restaurantWriteURL,
+    duplicateKey,
+    duplicateBody,
+  );
+  assert.equal(historicalReplay.status(), 200);
+  assert.equal(await historicalReplay.text(), duplicatePayloads[0]);
+  assert.deepEqual(await readCatalog(), current);
+  // Authorize before replay is checked below after revoking this same subject.
+  const samReplayKey = randomUUID();
+  const samReplayBody = JSON.stringify({
+    expected_version: current.restaurant.version,
+    open: false,
+  });
+  assert.equal(
+    (
+      await write(sam, restaurantWriteURL, samReplayKey, samReplayBody)
+    ).status(),
+    200,
+  );
+  baseline = await readCatalog(); // Only legitimate accepted writes advance the preserved snapshot.
+  const invalidOrigins: Record<string, string>[] = [
+    {},
+    { origin: "http://foreign.invalid" },
+  ];
+  for (const headers of invalidOrigins) {
+    assert.equal(
+      (
+        await alexOther.request.patch(restaurantWriteURL, {
+          headers: {
+            ...headers,
+            "content-type": "application/json",
+            "idempotency-key": randomUUID(),
+          },
+          data: JSON.stringify({
+            expected_version: baseline.restaurant.version,
+            open: true,
+          }),
+        })
+      ).status(),
+      403,
+    );
+  }
+  assert.deepEqual(await readCatalog(), baseline);
+  assert.deepEqual(
+    await catalogPage.evaluate(() => Object.keys(localStorage)),
+    [],
+  );
+  console.log(
+    "PASS real item/open controls, authoritative refresh, stale conflict, lost-after-commit explicit same-intent retry, duplicate convergence and competing versions",
+  );
+
   stage = "origin and framing";
   assert.equal(
     (await access(alex, { origin: "https://foreign.invalid" })).status(),
@@ -484,6 +777,41 @@ try {
   ]);
   assert.equal((await access(sam)).status(), 403);
   assert.equal((await access(alexOther)).status(), 200);
+  for (const [key, body] of [
+    [samReplayKey, samReplayBody],
+    [
+      randomUUID(),
+      JSON.stringify({
+        expected_version: baseline.restaurant.version,
+        open: true,
+      }),
+    ],
+  ]) {
+    const rejected = await write(sam, restaurantWriteURL, key, body);
+    assert.equal(rejected.status(), 403);
+    assert.equal(rejected.headers()["cache-control"], "no-store");
+    const denied = z
+      .strictObject({
+        error: z.strictObject({
+          code: z.literal("forbidden"),
+          message: z.literal("Staff access is not available."),
+        }),
+        request_id: z.string().regex(/^[a-f0-9]{32}$/),
+      })
+      .parse(await rejected.json());
+    assert.equal(denied.error.code, "forbidden");
+  }
+  const revokedItem = await write(
+    sam,
+    itemWriteURL,
+    randomUUID(),
+    JSON.stringify({
+      expected_version: baseline.items[0]?.version,
+      available: false,
+    }),
+  );
+  assert.equal(revokedItem.status(), 403);
+  assert.deepEqual(await readCatalog(), baseline);
   const revokedCatalog = await sam.request.get(
     `${origin}/api/staff/catalog${continuation.slice(continuation.indexOf("?"))}`,
   );
@@ -556,6 +884,20 @@ try {
   await stop(api);
   assert.equal((await access(alexOther)).status(), 503);
   assert.equal((await alexOther.request.get(catalogAPI)).status(), 503);
+  assert.equal(
+    (
+      await write(
+        alexOther,
+        restaurantWriteURL,
+        randomUUID(),
+        JSON.stringify({
+          expected_version: baseline.restaurant.version,
+          open: true,
+        }),
+      )
+    ).status(),
+    503,
+  );
   await catalogPage.goto(`${origin}/dashboard/catalog`);
   await expect(catalogPage.getByRole("main").getByRole("alert")).toHaveText(
     "Catalog is temporarily unavailable. Try again later.",
@@ -570,6 +912,7 @@ try {
   api = go(state.restaurantID);
   await ready(`${apiOrigin}/v1/staff/access`, 401);
   assert.equal((await access(alexOther)).status(), 200);
+  assert.deepEqual(await readCatalog(), baseline);
 
   stage = "JWKS outage and recovery";
   const headers = await cookieHeaders(alexOther);
@@ -599,8 +942,22 @@ try {
   await pg.close();
   assert.equal((await access(alexOther)).status(), 503);
   assert.equal((await alexOther.request.get(catalogAPI)).status(), 503);
+  assert.equal(
+    (
+      await write(
+        alexOther,
+        restaurantWriteURL,
+        randomUUID(),
+        JSON.stringify({
+          expected_version: baseline.restaurant.version,
+          open: true,
+        }),
+      )
+    ).status(),
+    503,
+  );
   console.log(
-    "PASS authoritative-session database outage fails closed for access and catalog",
+    "PASS authoritative-session database outage fails closed for access, catalog and availability",
   );
   console.log(
     "PASS owned dashboard integration; no screenshots/traces/storageState or credentials emitted",

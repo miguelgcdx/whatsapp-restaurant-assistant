@@ -1,4 +1,4 @@
-# Read-only local staff catalog
+# Local staff catalog
 
 ## Open the catalog
 
@@ -32,11 +32,15 @@ the authoritative uncached session and Go's current membership again; a cursor
 is never authority. Missing sessions go to sign-in, denied membership to access
 denied, and outages/malformed data show safe errors without old menu data.
 Loading, empty, invalid-page, end-of-menu and start-again states are explicit.
-There are no availability/open-state controls, cart or order buttons.
+The [staff availability controls](local-availability.md) now allow only item availability
+and restaurant open/closed changes. Read names, exact prices, current-page navigation and
+read errors are unchanged. There are still no cart, order, name or price-edit buttons.
 
 ## BFF boundary
 
-`GET /api/staff/catalog` is the sole catalog BFF route. A supplied Origin must
+`GET /api/staff/catalog` is the read catalog BFF route. The two separate protected
+PATCH BFF routes are described in [local availability](local-availability.md).
+A supplied Origin must
 match the configured Next origin; GET may omit Origin. Caller identity/role,
 restaurant and Authorization headers grant nothing. Body streams, framing other
 than an optional exact `Content-Length: 0`, Trailer headers, unknown/duplicate

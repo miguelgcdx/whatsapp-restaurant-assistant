@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { formatPrice } from "@/contracts/staff-catalog";
 import { runtimeAuth } from "@/server/auth/runtime";
 import { staffCatalog } from "@/server/staff-catalog";
+import { AvailabilityControl } from "./availability-controls";
 
 export default async function CatalogPage({
   searchParams,
@@ -48,6 +49,11 @@ export default async function CatalogPage({
     <main>
       <h1>Staff catalog</h1>
       <p>Restaurant is {restaurant.open ? "open" : "closed"}.</p>
+      <AvailabilityControl
+        target={{ kind: "restaurant" }}
+        version={restaurant.version}
+        value={restaurant.open}
+      />
       <h2>Current page</h2>
       <p>
         Showing {items.length} items on this page. Availability may change
@@ -62,6 +68,11 @@ export default async function CatalogPage({
               <h3>{item.name}</h3>
               <p>{formatPrice(item.price)}</p>
               <p>{item.available ? "Available" : "Unavailable"}</p>
+              <AvailabilityControl
+                target={{ kind: "item", id: item.id }}
+                version={item.version}
+                value={item.available}
+              />
             </li>
           ))}
         </ul>
