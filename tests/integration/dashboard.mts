@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,6 +13,7 @@ import {
   expect,
 } from "@playwright/test";
 import { z } from "zod";
+import { catalogSchema } from "../../src/contracts/staff-catalog.ts";
 import { databaseTarget } from "../../src/server/auth/config.ts";
 import { createAuth } from "../../src/server/auth/factory.ts";
 import { readState } from "../../src/server/auth/state.ts";
@@ -38,6 +39,7 @@ const port = async () => {
 const origin = `http://127.0.0.1:${await port()}`;
 const apiOrigin = `http://127.0.0.1:${await port()}`;
 const statePath = join(temporary, "private", "setup.json");
+const cursorKey = randomBytes(32).toString("hex");
 const env: NodeJS.ProcessEnv = {
   NODE_ENV: "development",
   PATH: process.env.PATH,
@@ -59,10 +61,11 @@ const env: NodeJS.ProcessEnv = {
   STAFF_API_URL: apiOrigin,
   STAFF_JWT_ISSUER: origin,
   STAFF_JWKS_URL: `${origin}/api/auth/jwks`,
+  STAFF_CATALOG_CURSOR_KEY: cursorKey,
   PLAYWRIGHT_BROWSERS_PATH: resolve(root, "backend/.cache/playwright"),
   DASHBOARD_E2E_ORIGIN: origin,
 };
-const secrets = [pg.dsn];
+const secrets = [pg.dsn, cursorKey];
 const redact = (value: string) =>
   secrets.reduce(
     (text, secret) => text.replaceAll(secret, "[redacted]"),
@@ -255,6 +258,33 @@ try {
     ["build", "-o", membershipBinary, "./cmd/local-staff-membership"],
     resolve(root, "backend"),
   );
+  stage = "explicit fictional catalog fixture";
+  const fixtureBinary = join(temporary, "browser-catalog-fixture");
+  await succeeded(
+    "go",
+    [
+      "build",
+      "-o",
+      fixtureBinary,
+      "./internal/catalog/testdata/browser-fixture",
+    ],
+    resolve(root, "backend"),
+  );
+  const fixture = await new Promise<{ code: number; stderr: string }>(
+    (done) => {
+      execFile(
+        fixtureBinary,
+        [],
+        {
+          env: { ...env, LOCAL_RESTAURANT_ID: state.restaurantID },
+          timeout: 15000,
+        },
+        (error, _stdout, stderr) => done({ code: error ? 1 : 0, stderr }),
+      );
+    },
+  );
+  assert.equal(fixture.code, 0, redact(fixture.stderr));
+  assert.equal(fixture.stderr, "");
   let api = go(state.restaurantID);
   let web = next();
   await ready(`${apiOrigin}/v1/staff/access`, 401);
@@ -319,6 +349,105 @@ try {
     "PASS real server-action cookie propagation, two staff and separate same-user sessions, JWT/JWKS→Go membership",
   );
 
+  stage = "real catalog navigation and exact fictional prices";
+  const catalogPage = pages[2];
+  assert(catalogPage);
+  await catalogPage
+    .getByRole("link", { name: "View catalog", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByRole("heading", { name: "Staff catalog", exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("Restaurant is open.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("USD 6.50", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("USD 4.50", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("USD 2.00", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("Unavailable", { exact: true }),
+  ).toBeVisible();
+  await catalogPage.goto(`${origin}/dashboard/catalog?limit=1`);
+  await expect(
+    catalogPage.getByRole("heading", { name: "Fictional bowl", exact: true }),
+  ).toBeVisible();
+  const continuation = await catalogPage
+    .getByRole("link", { name: "Next page", exact: true })
+    .getAttribute("href");
+  assert(continuation);
+  const catalogBefore = await alexOther.request.get(
+    `${origin}/api/staff/catalog`,
+  );
+  assert.equal(catalogBefore.status(), 200);
+  const baseline = catalogSchema.parse(await catalogBefore.json()).data;
+  await catalogPage
+    .getByRole("link", { name: "Next page", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByRole("heading", { name: "Fictional soup", exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByRole("heading", { name: "Fictional bowl", exact: true }),
+  ).toHaveCount(0);
+  await catalogPage
+    .getByRole("link", { name: "Next page", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByRole("heading", { name: "Fictional tea", exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByText("End of menu.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    catalogPage.getByRole("link", { name: "Next page", exact: true }),
+  ).toHaveCount(0);
+  await catalogPage
+    .getByRole("link", { name: "Start again", exact: true })
+    .click();
+  await expect(
+    catalogPage.getByText(
+      "Showing 3 items on this page. Availability may change between pages.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  assert.deepEqual(
+    await catalogPage.evaluate(() => Object.keys(localStorage)),
+    [],
+  );
+  const catalogAPI = `${origin}/api/staff/catalog`;
+  for (const suffix of [
+    "?restaurant_id=forged",
+    "?limit=1&limit=2",
+    "?cursor=invalid",
+  ])
+    assert.equal(
+      (await alexOther.request.get(`${catalogAPI}${suffix}`)).status(),
+      400,
+    );
+  assert.equal(
+    (
+      await alexOther.request.get(catalogAPI, {
+        headers: { origin: "http://foreign.invalid" },
+      })
+    ).status(),
+    403,
+  );
+  assert.equal((await alexOther.request.post(catalogAPI)).status(), 405);
+  assert.deepEqual(
+    catalogSchema.parse(await (await alexOther.request.get(catalogAPI)).json())
+      .data,
+    baseline,
+  );
+  console.log(
+    "PASS real catalog, exact prices, current-page traversal/start-again and unchanged rejected reads",
+  );
+
   stage = "origin and framing";
   assert.equal(
     (await access(alex, { origin: "https://foreign.invalid" })).status(),
@@ -355,6 +484,22 @@ try {
   ]);
   assert.equal((await access(sam)).status(), 403);
   assert.equal((await access(alexOther)).status(), 200);
+  const revokedCatalog = await sam.request.get(
+    `${origin}/api/staff/catalog${continuation.slice(continuation.indexOf("?"))}`,
+  );
+  assert.equal(revokedCatalog.status(), 403);
+  const samPage = pages[1];
+  assert(samPage);
+  await samPage.goto(`${origin}${continuation}`);
+  await expect(samPage).toHaveURL(`${origin}/access-denied`);
+  await expect(
+    samPage.getByText("Fictional soup", { exact: true }),
+  ).toHaveCount(0);
+  assert.deepEqual(
+    catalogSchema.parse(await (await alexOther.request.get(catalogAPI)).json())
+      .data,
+    baseline,
+  );
   const incomplete = await setup();
   assert.equal(incomplete.code, 1);
   assert.equal(incomplete.stdout, "");
@@ -388,6 +533,10 @@ try {
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(`${origin}/sign-in`);
   assert.equal((await access(alex)).status(), 401);
+  assert.equal(
+    (await alex.request.get(`${catalogAPI}?limit=1&cursor=opaque`)).status(),
+    401,
+  );
   assert.equal(await owner.auth.api.getSession({ headers: alexHeaders }), null);
   assert.equal((await access(alexOther)).status(), 200);
   assert(await owner.auth.api.getSession({ headers: samHeaders }));
@@ -406,6 +555,14 @@ try {
   stage = "Go outage and absent membership";
   await stop(api);
   assert.equal((await access(alexOther)).status(), 503);
+  assert.equal((await alexOther.request.get(catalogAPI)).status(), 503);
+  await catalogPage.goto(`${origin}/dashboard/catalog`);
+  await expect(catalogPage.getByRole("main").getByRole("alert")).toHaveText(
+    "Catalog is temporarily unavailable. Try again later.",
+  );
+  await expect(
+    catalogPage.getByText("Fictional bowl", { exact: true }),
+  ).toHaveCount(0);
   api = go(randomUUID());
   await ready(`${apiOrigin}/v1/staff/access`, 401);
   assert.equal((await access(alexOther)).status(), 403);
@@ -441,7 +598,10 @@ try {
   pgClosed = true;
   await pg.close();
   assert.equal((await access(alexOther)).status(), 503);
-  console.log("PASS authoritative-session database outage fails closed");
+  assert.equal((await alexOther.request.get(catalogAPI)).status(), 503);
+  console.log(
+    "PASS authoritative-session database outage fails closed for access and catalog",
+  );
   console.log(
     "PASS owned dashboard integration; no screenshots/traces/storageState or credentials emitted",
   );
