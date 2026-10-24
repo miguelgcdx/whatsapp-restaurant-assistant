@@ -19,7 +19,9 @@ export default async function Dashboard() {
       <h1>Staff dashboard</h1>
       <p>Signed in as {result.name}.</p>
       <output>Staff access confirmed.</output>
-      <p>Restaurant workflows are not available in this access foundation.</p>
+      <p>
+        <a href="/dashboard/catalog">View catalog</a>
+      </p>
       <form action={signOut}>
         <button type="submit">Sign out</button>
       </form>

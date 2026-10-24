@@ -1,6 +1,9 @@
 # Local staff access foundation
 
 This unit provides authentication and a protected access shell, **not orders**.
+The additive [read-only catalog dashboard](local-catalog.md) reuses these
+boundaries; its new candidate verification is separate from the historical
+foundation evidence below.
 Better Auth owns `auth`; Go owns `app` restaurant identity/current membership.
 No public registration, real accounts, email providers or external services are used.
 
@@ -58,9 +61,10 @@ server start or build.
 
 ## Browser and server boundaries
 
-Sign in at `/sign-in`; a minimal `/dashboard` displays only staff name/access
-state. Every dashboard load, sign-out action and BFF request checks the actual
-uncached server session; no cookie-presence/layout authorization is used.
+Sign in at `/sign-in`; `/dashboard` displays staff name/access state, sign-out
+and a link to the read-only `/dashboard/catalog` page. Every dashboard load,
+sign-out action and BFF request checks the actual uncached server session; no
+cookie-presence/layout authorization is used.
 Sign-in/out use server actions with `nextCookies` last. Cookie/session caching
 is disabled. Existing Next Cache Components/Partial Prefetching stay enabled;
 a public Suspense fallback surrounds request-time content. Dashboard headers are

@@ -14,7 +14,10 @@ Key rotation invalidates existing continuation cursors; restart paging.
 
 Runtime does not migrate or seed. Explicit catalog setup remains a separate local
 operation; missing restaurant settings fail closed rather than inventing defaults.
-This is Go-only: no BFF, browser catalog, mutation route, or ordering feature.
+The original Go-only slice had no browser/BFF seam. The additive
+[read-only dashboard guide](../../docs/local-catalog.md) describes the Next BFF,
+protected browser page and separately owned verification. There is still no
+mutation route or ordering feature.
 
 ## Request and response
 
@@ -105,5 +108,6 @@ because the verifier-added `/usr/bin/time` was missing: runtime count 0, verdict
 PARTIAL. The human explicitly accepted static review plus parent runtime evidence
 for this local delivery only; this is not independent runtime PASS or a deployment
 grant. [The feature log](../../odd/tasks/staff-catalog-read.md) preserves the full
-failed-launch evidence and disposition. Component tests do not prove a browser/BFF
-seam.
+failed-launch evidence and disposition. Those prior-slice component tests do
+not prove a browser/BFF seam. The new dashboard candidate must collect its own real integration and
+independent verification evidence; this historical waiver is not inherited.
