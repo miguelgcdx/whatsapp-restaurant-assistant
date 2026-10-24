@@ -50,6 +50,12 @@ func localConfig(dsn string) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
+// LocalPoolConfig shares the same guarded, bounded local pool settings with
+// other app-owned stores. It performs no database I/O or migrations.
+func LocalPoolConfig(dsn string) (*pgxpool.Config, error) {
+	return localConfig(dsn)
+}
+
 // Open is lazy and never applies migrations or creates a database.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := localConfig(dsn)

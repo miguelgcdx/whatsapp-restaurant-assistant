@@ -95,6 +95,30 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (ClaimJobRow
 	return i, err
 }
 
+const ensureRestaurantIdentity = `-- name: EnsureRestaurantIdentity :exec
+INSERT INTO app.restaurants (id) VALUES ($1) ON CONFLICT (id) DO NOTHING
+`
+
+func (q *Queries) EnsureRestaurantIdentity(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, ensureRestaurantIdentity, id)
+	return err
+}
+
+const ensureStaffMembership = `-- name: EnsureStaffMembership :exec
+INSERT INTO app.staff_memberships (restaurant_id,auth_user_id,active)
+VALUES ($1,$2,true) ON CONFLICT (restaurant_id,auth_user_id) DO NOTHING
+`
+
+type EnsureStaffMembershipParams struct {
+	RestaurantID pgtype.UUID
+	AuthUserID   string
+}
+
+func (q *Queries) EnsureStaffMembership(ctx context.Context, arg EnsureStaffMembershipParams) error {
+	_, err := q.db.Exec(ctx, ensureStaffMembership, arg.RestaurantID, arg.AuthUserID)
+	return err
+}
+
 const expireSends = `-- name: ExpireSends :many
 UPDATE app.outbox SET state='unknown',lease_until=NULL
 WHERE state='sending' AND lease_until <= $1 RETURNING id,attempt
@@ -323,6 +347,20 @@ func (q *Queries) NextSequence(ctx context.Context, sender string) (int64, error
 	return next_sequence, err
 }
 
+const revokeStaffMembership = `-- name: RevokeStaffMembership :exec
+UPDATE app.staff_memberships SET active=false WHERE restaurant_id=$1 AND auth_user_id=$2
+`
+
+type RevokeStaffMembershipParams struct {
+	RestaurantID pgtype.UUID
+	AuthUserID   string
+}
+
+func (q *Queries) RevokeStaffMembership(ctx context.Context, arg RevokeStaffMembershipParams) error {
+	_, err := q.db.Exec(ctx, revokeStaffMembership, arg.RestaurantID, arg.AuthUserID)
+	return err
+}
+
 const setDeliveryState = `-- name: SetDeliveryState :execrows
 UPDATE app.outbox SET state=$1::text,provider_id=$2,lease_until=NULL
 WHERE id=$3 AND generation=$4 AND state='sending' AND lease_until > $5
@@ -375,4 +413,20 @@ func (q *Queries) SetJobState(ctx context.Context, arg SetJobStateParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const staffMembershipActive = `-- name: StaffMembershipActive :one
+SELECT active FROM app.staff_memberships WHERE restaurant_id=$1 AND auth_user_id=$2
+`
+
+type StaffMembershipActiveParams struct {
+	RestaurantID pgtype.UUID
+	AuthUserID   string
+}
+
+func (q *Queries) StaffMembershipActive(ctx context.Context, arg StaffMembershipActiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, staffMembershipActive, arg.RestaurantID, arg.AuthUserID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
 }

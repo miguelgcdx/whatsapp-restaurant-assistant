@@ -86,3 +86,16 @@ SELECT e.provider_event_id,e.sender,e.content,j.state AS job_state,j.attempt,
  (SELECT count(*) FROM app.jobs WHERE event_id=e.id) AS job_count,
  (SELECT count(*) FROM app.outbox WHERE event_id=e.id) AS outbox_count
 FROM app.inbound_events e JOIN app.jobs j ON j.event_id=e.id LEFT JOIN app.outbox o ON o.event_id=e.id WHERE e.provider_event_id=$1;
+
+-- name: EnsureRestaurantIdentity :exec
+INSERT INTO app.restaurants (id) VALUES ($1) ON CONFLICT (id) DO NOTHING;
+
+-- name: EnsureStaffMembership :exec
+INSERT INTO app.staff_memberships (restaurant_id,auth_user_id,active)
+VALUES ($1,$2,true) ON CONFLICT (restaurant_id,auth_user_id) DO NOTHING;
+
+-- name: StaffMembershipActive :one
+SELECT active FROM app.staff_memberships WHERE restaurant_id=$1 AND auth_user_id=$2;
+
+-- name: RevokeStaffMembership :exec
+UPDATE app.staff_memberships SET active=false WHERE restaurant_id=$1 AND auth_user_id=$2;

@@ -45,6 +45,10 @@ type AppOutbox struct {
 	ProviderID string
 }
 
+type AppRestaurant struct {
+	ID pgtype.UUID
+}
+
 type AppSendAttempt struct {
 	OutboxID   pgtype.UUID
 	Attempt    int32
@@ -53,4 +57,10 @@ type AppSendAttempt struct {
 	FinishedAt pgtype.Timestamptz
 	Outcome    string
 	ProviderID string
+}
+
+type AppStaffMembership struct {
+	RestaurantID pgtype.UUID
+	AuthUserID   string
+	Active       bool
 }
