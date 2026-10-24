@@ -11,9 +11,18 @@ The optional [catalog schema](docs/catalog-schema.md), [scoped catalog store](do
 and [pure draft pricing](docs/pricing.md) add an explicitly configured fictional-test
 foundation. The integration test maps persisted fixed prices/settings into the pure
 engine and checks totals and availability without dropping existing draft units.
-There is no catalog/cart staff endpoint, persisted customer cart, contextual
-confirmation, order submission, or receipt yet. No production menu/defaults are seeded.
+The additive [local fixture cart core](docs/cart.md) now persists one draft per
+explicit local conversation, stable priced units and notes, CAS versions and
+complete historical operation results. Native Go APIs only: it is not a persisted
+verified-customer identity, customer/staff cart endpoint, contextual confirmation,
+order submission or receipt. Unselected fulfillment has a subtotal only, never an
+invented pickup choice or final order total. No production menu/defaults are seeded.
 The complete Go checks below include this foundation; no new CLI is introduced.
+Focused cart checks and populated-v4 upgrade evidence are described in the cart
+guide. Parent full normal/vet/race checks passed; independent setup timed out before
+runtime tests. The [accepted LOCAL-only proof limitations](docs/cart.md#observed-results-and-local-dispositions)
+retain missing independent runtime and supplemental pre-implementation RED history;
+they are not production approval or a future waiver.
 
 ## Verify the complete local loop
 
