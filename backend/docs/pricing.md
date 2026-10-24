@@ -21,6 +21,11 @@ have no price field: only the trusted engine determines prices. The caller
 allocates stable unit UUIDs; no randomness, implicit quantity, or quantity cap is
 introduced here. Repeated menu IDs represent separate units with separate notes.
 An unselected fulfillment may accompany an application draft but cannot be quoted.
+`Engine.Subtotal(draft)` uses the same existing checked validation without a
+fulfillment choice, fee, final total, payment method or input mutation. It returns
+zero for an empty valid draft, retains unavailable existing units, and rejects
+malformed/duplicate/unknown units and arithmetic overflow just as Quote does.
+`Quote` still rejects unselected fulfillment; no pickup default is introduced.
 
 - `Add(draft, unit)` appends exactly one known, available unit.
 - `Remove(draft, unitID)` removes exactly that unit, preserving other units' order.
@@ -80,5 +85,10 @@ network access. They cover the canonical totals, exact unit removal, notes,
 caller-owned slices, invalid inputs, catalog snapshot ownership, unavailable
 items, explicit fulfillment, Unicode boundaries, and int64 overflow. There is no
 existing CLI or shared helper change, so historical CLI differential checks do
-not apply. Storage, migrations, and full-suite seam verification belong to the
-parent work unit.
+not apply. The additive subtotal tests cover its shared-validation behavior and preserve
+Quote's rejection of unselected fulfillment. The [local fixture cart](cart.md)
+uses stored per-unit price snapshots rather than caller amounts or fresh repricing;
+its PostgreSQL text boundary also rejects NUL notes without changing this pure
+package's historical validation. Parent full normal/vet/race passed; the cart guide
+records [evidence ownership and accepted LOCAL-only limitations](cart.md#observed-results-and-local-dispositions),
+including unavailable independent runtime. Those limits are not independent runtime approval.
