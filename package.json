@@ -7,6 +7,7 @@
     "dev:local": "next dev --hostname 127.0.0.1",
     "test": "vitest run",
     "test:auth": "vitest run tests/contracts tests/auth",
+    "setup:auth": "node --conditions=react-server scripts/local-auth/setup.mts",
     "typecheck": "tsc --noEmit",
     "build": "next build",
     "start": "next start",
