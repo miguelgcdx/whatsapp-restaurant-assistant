@@ -15,6 +15,14 @@ services are provisioned. The existing synthetic API/worker remain supported.
 - Browser state-changing requests require a matching explicit configured Origin; do not accept missing/foreign Origin or substitute Sec-Fetch-Site/forwarded Host. Next/Better Auth protections supplement, not replace, application checks. In-process offline setup API has no browser endpoint.
 - Same-origin BFF only calls fixed configured Go origin and fixed access path. Never forward browser Authorization/role/restaurant/identity headers, arbitrary path/query, cookies or provider secrets to Go. Validate Go response before returning minimal DTO. No automatic non-idempotent retries. Use a direct non-proxy HTTP transport (e.g. node:http with agent:false for the local HTTP origin); do not inherit ambient proxy settings. GET may omit Origin, but a supplied foreign Origin is rejected; state-changing actions always require the explicit matching Origin.
 
+### Additive catalog boundary
+
+The later `odd/tasks/staff-catalog-read.md` S1–S4 adds only the protected Go
+`GET /v1/staff/catalog` route; see [staff-catalog.md](staff-catalog.md) for its
+bounded page/envelope and optional `STAFF_CATALOG_CURSOR_KEY` configuration.
+It reuses the public verifier/current membership APIs without modifying this
+legacy access wire contract. No catalog BFF/UI or mutation routes are added.
+
 ### Staff access HTTP
 
 Go: `GET /v1/staff/access`, BFF: `GET /api/staff/access`.

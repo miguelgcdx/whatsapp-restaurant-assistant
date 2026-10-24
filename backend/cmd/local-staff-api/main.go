@@ -15,7 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	"restaurant-assistant/backend/internal/catalog"
 	"restaurant-assistant/backend/internal/staff"
+	"restaurant-assistant/backend/internal/staffcatalog"
 )
 
 const apiHelp = `Usage: local-staff-api [-listen 127.0.0.1:8081]
@@ -23,6 +25,9 @@ const apiHelp = `Usage: local-staff-api [-listen 127.0.0.1:8081]
 Required environment: LOCAL_DATABASE_URL, LOCAL_RESTAURANT_ID,
 STAFF_JWT_ISSUER, STAFF_JWKS_URL (fixed /api/auth/jwks).
 GET /v1/staff/access requires an EdDSA bearer token and current membership.
+GET /v1/staff/catalog uses the same authority; optional limit=1..100 and cursor.
+Optional STAFF_CATALOG_CURSOR_KEY: 64 lowercase hex characters (32 random bytes).
+Without this separate application-purpose key, authenticated catalog reads return 503.
 No migrations or runtime fixture provisioning. Errors are redacted.
 `
 
@@ -56,11 +61,21 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	if e != nil {
 		return e
 	}
+	catalogStore, e := catalog.OpenStore(ctx, getenv("LOCAL_DATABASE_URL"), restaurant)
+	if e != nil {
+		return e
+	}
+	defer catalogStore.Close()
+	catalogHandler, e := staffcatalog.NewHandler(catalogStore, store, restaurant, v, getenv("STAFF_CATALOG_CURSOR_KEY"))
+	if e != nil {
+		return e
+	}
+	combined := dispatch(h, catalogHandler)
 	listener, e := net.Listen("tcp", *listen)
 	if e != nil {
 		return staff.ErrUnavailable
 	}
-	server := &http.Server{Handler: h, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, BaseContext: func(net.Listener) context.Context { return ctx }}
+	server := &http.Server{Handler: combined, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, BaseContext: func(net.Listener) context.Context { return ctx }}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	select {
@@ -83,6 +98,19 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 		return nil
 	}
 }
+
+// dispatch deliberately avoids ServeMux cleaning/redirects. The original
+// access handler still owns every legacy access and unknown-path response.
+func dispatch(access, catalog http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/staff/catalog" {
+			catalog.ServeHTTP(w, r)
+			return
+		}
+		access.ServeHTTP(w, r)
+	})
+}
+
 func execute(ctx context.Context, args []string, getenv func(string) string, out, errout io.Writer) int {
 	e := run(ctx, args, getenv)
 	if errors.Is(e, flag.ErrHelp) {

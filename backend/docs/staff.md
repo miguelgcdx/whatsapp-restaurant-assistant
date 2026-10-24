@@ -1,7 +1,8 @@
 # Local Go staff access
 
-This component provides authentication and membership access only. It does not
-retrieve orders, create business settings, read Better Auth's private tables, or
+This component provides authentication and membership access and an optional
+[protected read-only catalog](staff-catalog.md). It does not retrieve orders,
+create business settings, read Better Auth's private tables, or
 contact live providers. Better Auth owns identity; Go owns app membership with an
 opaque subject and no cross-schema auth foreign key.
 
@@ -49,6 +50,7 @@ Set these explicit values before starting `go run ./cmd/local-staff-api`:
 | `LOCAL_RESTAURANT_ID` | Singleton configured canonical UUID |
 | `STAFF_JWT_ISSUER` | Exact local Better Auth origin, e.g. `http://127.0.0.1:3000` |
 | `STAFF_JWKS_URL` | Fixed local JWKS URL ending exactly `/api/auth/jwks` |
+| `STAFF_CATALOG_CURSOR_KEY` | Optional separate application-purpose key: 64 lowercase hex characters / 32 random bytes; missing disables authenticated catalog reads with 503 |
 
 Service origins require numeric loopback, explicit port, no userinfo, query or
 fragment. `-listen` defaults to `127.0.0.1:8081`; only numeric-loopback host:port is
