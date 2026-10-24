@@ -94,9 +94,43 @@ body bound. Responses must pass the shared strict DTO schema. Go403 stays denied
 other dependency/protocol failures become redacted 503, never successful empty
 access. No order counts, settings or business defaults are fabricated.
 
+## Verification and evidence
 
-## Component verification
+- `pnpm test:auth`: contract/auth components on fresh temporary PostgreSQL, real
+  supported Better Auth APIs, sessions and JWTs. Only `server-only` is stubbed.
+  The fake Go in `access.test.ts` and operator callback in `setup.test.ts` remain
+  component seams, not independent Go authorization proof. Retained independent
+  public regressions cover private-state invariants and conflicting partial setup.
+- `pnpm test:dashboard`: the owned `tests/integration/dashboard.mts` harness,
+  not an inherited/live target. It ignores inherited database configuration,
+  creates a temporary cluster/private generated fixtures, runs real Go migrations
+  and setup concurrently, launches numeric-loopback Next/Go, and cleans up only
+  its own listeners/state/database. It runs `tests/e2e/auth.spec.ts` plus actual
+  Alex/Sam and a second Alex browser session: action-cookie propagation, official
+  JWT/JWKS→Go membership, revocation, failed setup without reactivation/reset,
+  logout isolation, absent membership, Go/JWKS outages/recovery and auth DB outage.
+- `pnpm typecheck` and `pnpm build`: build with runtime auth environment unset.
+  Auth APIs remain dynamic and personalized pages partially prerendered with
+  request-time content; no runtime provisioning/configuration is required to build.
 
-Run `pnpm test:auth` and `pnpm typecheck`; isolated auth components and the
-separate Go authorization checks have explicit evidence/limits in the feature
-tracker. Combined browser orchestration is delivered in the following slice.
+Observed parent checks: 22 component/contract tests, the real owned browser seam,
+full Go normal/race/vet and production build passed. Original browser compile500
+failure is retained in `odd/tasks/protected-dashboard.md`; the bounded correction
+keeps Cache Components and suspends before auth initialization. The first build's
+whole-project asset-tracing warning was corrected by excluding the private input
+path, not by bundling credentials. Targeted independent static review of the final
+request/asset boundary found no blocker; its runtime was unavailable because of
+verifier tool/scratch-policy limits. The human explicitly accepted static review
+plus parent real runtime for LOCAL delivery, retaining the final PARTIAL and
+unexecuted check. RDD is disabled for this clone by explicit user instruction;
+the earlier candidate decline is not approval. Local source delivery is tracked
+separately.
+The earlier independent formatter PARTIAL (scratch-only probe formatting) stays
+recorded with explicit human acceptance; it is not relabeled PASS.
+
+No screenshots, traces, storageState or credentials are emitted. The JWT test
+asserts its declared 60-second lifetime and immediate post-logout acceptance;
+there is no new elapsed-60-second expiry/rotation/cache proof. Component expiry
+and Go expired-token checks are separate evidence, not a timed browser claim.
+No orders/business workflows, live accounts/services or production deployment
+are proved or enabled by these local checks.
