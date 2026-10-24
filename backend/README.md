@@ -5,6 +5,16 @@ Go worker, and send a fake acknowledgement. This is **not** a working restaurant
 ordering product, Meta integration, AI integration, or production service.
 No real provider credentials, customer data, staff accounts or payments belong here.
 
+## Local catalog and pricing foundation
+
+The optional [catalog schema](docs/catalog-schema.md), [scoped catalog store](docs/catalog.md)
+and [pure draft pricing](docs/pricing.md) add an explicitly configured fictional-test
+foundation. The integration test maps persisted fixed prices/settings into the pure
+engine and checks totals and availability without dropping existing draft units.
+There is no catalog/cart staff endpoint, persisted customer cart, contextual
+confirmation, order submission, or receipt yet. No production menu/defaults are seeded.
+The complete Go checks below include this foundation; no new CLI is introduced.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.
