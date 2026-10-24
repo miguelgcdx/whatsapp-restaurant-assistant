@@ -17,6 +17,7 @@ import (
 
 	"restaurant-assistant/backend/internal/catalog"
 	"restaurant-assistant/backend/internal/staff"
+	"restaurant-assistant/backend/internal/staffavailability"
 	"restaurant-assistant/backend/internal/staffcatalog"
 )
 
@@ -28,6 +29,14 @@ GET /v1/staff/access requires an EdDSA bearer token and current membership.
 GET /v1/staff/catalog uses the same authority; optional limit=1..100 and cursor.
 Optional STAFF_CATALOG_CURSOR_KEY: 64 lowercase hex characters (32 random bytes).
 Without this separate application-purpose key, authenticated catalog reads return 503.
+PATCH /v1/staff/catalog/items/{id}/availability: {expected_version:STRING,available:BOOL}.
+PATCH /v1/staff/restaurant/availability: {expected_version:STRING,open:BOOL}.
+Writes require the same JWT/current membership, application/json (64 KiB maximum),
+and one Idempotency-Key (1-128 printable ASCII, no whitespace); no cursor key needed.
+Versions are canonical nonnegative int64 decimal strings. No query/extra fields.
+409 version_conflict requires refresh; idempotency_conflict means changed key/body.
+Same-key/body retries replay the original result after current authorization.
+No automatic mutation retry; preserve the exact key/body for an uncertain outcome.
 No migrations or runtime fixture provisioning. Errors are redacted.
 `
 
@@ -70,7 +79,11 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	if e != nil {
 		return e
 	}
-	combined := dispatch(h, catalogHandler)
+	availabilityHandler, e := staffavailability.NewHandler(catalogStore, store, v)
+	if e != nil {
+		return e
+	}
+	combined := dispatch(h, catalogHandler, availabilityHandler)
 	listener, e := net.Listen("tcp", *listen)
 	if e != nil {
 		return staff.ErrUnavailable
@@ -101,8 +114,12 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 // dispatch deliberately avoids ServeMux cleaning/redirects. The original
 // access handler still owns every legacy access and unknown-path response.
-func dispatch(access, catalog http.Handler) http.Handler {
+func dispatch(access, catalog, availability http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if staffavailability.Matches(r.URL.Path) {
+			availability.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/v1/staff/catalog" {
 			catalog.ServeHTTP(w, r)
 			return

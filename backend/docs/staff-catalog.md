@@ -17,7 +17,9 @@ operation; missing restaurant settings fail closed rather than inventing default
 The original Go-only slice had no browser/BFF seam. The additive
 [read-only dashboard guide](../../docs/local-catalog.md) describes the Next BFF,
 protected browser page and separately owned verification. There is still no
-mutation route or ordering feature.
+ordering feature. Two [availability PATCH controls](staff-availability.md) are
+now available using the same JWT/membership and configured restaurant, without a
+cursor-key dependency. Names/prices/menu/settings configuration remain fixed.
 
 ## Request and response
 

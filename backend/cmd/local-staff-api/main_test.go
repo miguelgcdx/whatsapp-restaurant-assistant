@@ -20,6 +20,7 @@ import (
 	"restaurant-assistant/backend/internal/foundation"
 	"restaurant-assistant/backend/internal/postgres"
 	"restaurant-assistant/backend/internal/staff"
+	"restaurant-assistant/backend/internal/staffavailability"
 	"restaurant-assistant/backend/internal/staffcatalog"
 	"restaurant-assistant/backend/internal/testpg"
 	"strings"
@@ -96,7 +97,11 @@ func TestProductionDispatcher(t *testing.T) {
 				t.Fatal(err)
 			}
 			// This exact production helper is also called by run(), not a test router.
-			server := httptest.NewServer(dispatch(access, catalogHandler))
+			availabilityHandler, err := staffavailability.NewHandler(store, members, verifier)
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(dispatch(access, catalogHandler, availabilityHandler))
 			defer server.Close()
 			client := server.Client()
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -176,6 +181,46 @@ func TestProductionDispatcher(t *testing.T) {
 	if err != nil || gotSettings != settings {
 		t.Fatal("dispatcher changed settings", err)
 	}
+	// The real production dispatcher permits writes with and without the read-only cursor key.
+	for index, key64 := range []string{"", hex.EncodeToString(key)} {
+		access, err := staff.NewHandler(members, restaurant, verifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read, err := staffcatalog.NewHandler(store, members, restaurant, verifier, key64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write, err := staffavailability.NewHandler(store, members, verifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewServer(dispatch(access, read, write))
+		for _, target := range []struct{ path, field string }{{"/v1/staff/catalog/items/" + items[0].ID + "/availability", "available"}, {"/v1/staff/restaurant/availability", "open"}} {
+			body := fmt.Sprintf(`{"expected_version":"%d","%s":false}`, index, target.field)
+			req, err := http.NewRequestWithContext(t.Context(), "PATCH", server.URL+target.path, strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+raw)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", fmt.Sprintf("dispatch-%d", index))
+			res, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			if err != nil || res.StatusCode != 200 || res.Header.Get("Cache-Control") != "no-store" || !bytes.Contains(payload, []byte(fmt.Sprintf(`"version":"%d"`, index+1))) {
+				t.Fatalf("PATCH %s: %d %s %v", target.path, res.StatusCode, payload, err)
+			}
+		}
+		server.Close()
+	}
+	after, err = foundationStore.Inspect(t.Context(), event.ID)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("writes changed foundation/outbound state", err)
+	}
 }
 
 func TestCatalogConfiguration(t *testing.T) {
@@ -206,7 +251,7 @@ func TestCatalogConfiguration(t *testing.T) {
 	if code != 0 || out.Len() != 0 || errout.Len() != 0 {
 		t.Fatalf("valid key startup: %d %q %q", code, out.String(), errout.String())
 	}
-	if !strings.Contains(apiHelp, "STAFF_CATALOG_CURSOR_KEY") || !strings.Contains(apiHelp, "GET /v1/staff/catalog") {
+	if !strings.Contains(apiHelp, "PATCH /v1/staff/catalog/items/{id}/availability") || !strings.Contains(apiHelp, "PATCH /v1/staff/restaurant/availability") || !strings.Contains(apiHelp, "Idempotency-Key") || !strings.Contains(apiHelp, "STAFF_CATALOG_CURSOR_KEY") || !strings.Contains(apiHelp, "GET /v1/staff/catalog") {
 		t.Fatal("catalog help missing")
 	}
 }
