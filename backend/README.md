@@ -37,6 +37,19 @@ checks passed. Independent setup failed offline before probes; the human accepte
 that explicitly documented LOCAL-only proof limitation, not an independent PASS.
 See the [execution evidence](docs/cart-execution.md#final-local-evidence-and-disposition).
 
+The additive [local draft fulfillment and quote seam](docs/cart-fulfillment.md)
+adds explicit pickup/delivery, exact address/phone validation, and server-calculated
+fee/total quotes through `SetFulfillmentCall`, `QuoteCall` and `ExecuteDraft`.
+Migration 7 adds an empty scoped selection side table and widens existing action
+checks. Legacy subtotal bytes/APIs remain unchanged; rich mutations share their
+operation ledger and cart CAS version. Quotes sample settings in the same guarded
+transaction and never imply pickup before selection. This remains native-only,
+with no automatic worker dispatch, HTTP/CLI surface, confirmation or orders.
+Parent full normal/vet/race checks and the final independent assessment passed
+for this native LOCAL scope. The [final evidence](docs/cart-fulfillment.md#final-local-evidence)
+separates those executions, adopted regression probes and bounded integrity claims;
+it does not imply production or downstream ordering approval.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.

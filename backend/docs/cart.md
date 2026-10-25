@@ -3,7 +3,11 @@
 `internal/cart` persists a single draft per explicitly provisioned **local fixture
 conversation**. It has native Go interfaces only: no HTTP/customer endpoint,
 WhatsApp/model adapter, order submission, receipts, dashboard, or new CLI.
-A subtotal is not a final order total.
+A subtotal is not a final order total. The additive native
+[draft fulfillment and quote seam](cart-fulfillment.md) explicitly selects pickup
+or delivery and returns a separate rich quote; these legacy direct APIs and
+subtotal wire bytes remain unchanged. Selection shares the cart version with unit
+edits, while old direct edits preserve the separate selection row.
 
 The additive [local conversation-to-cart execution bridge](cart-execution.md)
 binds already persisted synthetic events and actual job claims to explicitly

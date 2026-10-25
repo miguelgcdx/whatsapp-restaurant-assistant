@@ -72,8 +72,12 @@ Create/edit use the existing complete committed-result ledger, canonicalization,
 snapshot validation and version/CAS logic. Replay returns the original cart/unit
 IDs, prices, notes, version and subtotal even after later edits. Bound reads return
 a **fresh** scoped snapshot every time and never insert mutation ledger results.
-All results remain subtotal-only: no fulfillment default, fee, final order total,
-confirmation, receipt or order is introduced.
+Results from `Execute` remain subtotal-only. The additive
+[draft fulfillment seam](cart-fulfillment.md) uses separate `SetFulfillmentCall` /
+`QuoteCall` descriptors and `ExecuteDraft` rich results, with explicit selection,
+separate fee/total and settings basis. The two result seams reject each other's
+call kinds with `ErrInput` before domain effects. Neither introduces implicit
+pickup, confirmation, receipt or order.
 
 A cart commit followed by process failure before job completion can be replayed
 under a newly claimed generation with the same registered plan. The old generation

@@ -174,18 +174,32 @@ func (s *Store) read(ctx context.Context, tx pgx.Tx, local LocalContext, id Cart
 
 // validateSnapshot uses only persisted prices, never a current catalog lookup.
 func validateSnapshot(s Snapshot) (int64, error) {
-	if !validID(s.ID.value) || !validID(s.ConversationID.value) || s.Version.value < 0 || !currency(s.Currency) || s.Exponent < 0 || s.Exponent > 6 || s.Units == nil || len(s.Units) > resultBudget/72 {
+	engine, units, err := snapshotPricing(s, 0)
+	if err != nil {
+		return 0, err
+	}
+	subtotal, err := engine.Subtotal(units)
+	if err != nil {
 		return 0, ErrStoredData
+	}
+	return subtotal, nil
+}
+
+// snapshotPricing constructs the pure engine from persisted prices only. Both
+// subtotal and rich quote validation share every unit invariant.
+func snapshotPricing(s Snapshot, fee int64) (*pricing.Engine, []pricing.Unit, error) {
+	if !validID(s.ID.value) || !validID(s.ConversationID.value) || s.Version.value < 0 || !currency(s.Currency) || s.Exponent < 0 || s.Exponent > 6 || s.Units == nil || len(s.Units) > resultBudget/72 {
+		return nil, nil, ErrStoredData
 	}
 	catalog := make(map[MenuID]pricing.Item)
 	units := make([]pricing.Unit, 0, len(s.Units))
 	for _, u := range s.Units {
 		if !validID(u.ID.value) || !validID(u.MenuID.value) || u.PriceMinor < 0 || u.Currency != s.Currency || u.Exponent != s.Exponent || !text(u.Note, 500, false) {
-			return 0, ErrStoredData
+			return nil, nil, ErrStoredData
 		}
 		item := pricing.Item{ID: u.MenuID.value, Name: "stored snapshot", Currency: u.Currency, Price: u.PriceMinor, Available: true}
 		if previous, ok := catalog[u.MenuID]; ok && previous != item {
-			return 0, ErrStoredData
+			return nil, nil, ErrStoredData
 		}
 		catalog[u.MenuID] = item
 		units = append(units, pricing.Unit{ID: u.ID.value, MenuID: u.MenuID.value, Note: u.Note})
@@ -194,15 +208,11 @@ func validateSnapshot(s Snapshot) (int64, error) {
 	for _, i := range catalog {
 		items = append(items, i)
 	}
-	engine, err := pricing.New(pricing.Settings{Currency: s.Currency, Exponent: int(s.Exponent)}, items)
+	engine, err := pricing.New(pricing.Settings{Currency: s.Currency, Exponent: int(s.Exponent), DeliveryFee: fee}, items)
 	if err != nil {
-		return 0, ErrStoredData
+		return nil, nil, ErrStoredData
 	}
-	subtotal, err := engine.Subtotal(units)
-	if err != nil {
-		return 0, ErrStoredData
-	}
-	return subtotal, nil
+	return engine, units, nil
 }
 func encodeResult(r Result) ([]byte, error) {
 	subtotal, err := validateSnapshot(r.Cart)
@@ -305,17 +315,26 @@ func (s *Store) commit(ctx context.Context, tx pgx.Tx, local LocalContext, op Op
 		return Result{}, err
 	}
 	hash := fingerprint(req)
-	_, err = tx.Exec(ctx, `INSERT INTO app.cart_operations(restaurant_id,conversation_id,operation_id,cart_id,action,fingerprint,result,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, s.restaurant, local.conversation.value, op.value, snapshot.ID.value, req.Action, hash[:], string(b), time.Now().UTC())
-	if err != nil {
-		return Result{}, ErrUnavailable
-	}
-	if err = checkAuthority(guard); err != nil {
+	if err = s.commitOperation(ctx, tx, local, op, snapshot.ID, req.Action, hash, b, guard); err != nil {
 		return Result{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return Result{}, ErrUnavailable
-	}
 	return result, nil
+}
+
+// Both result codecs share the existing operation namespace and post-insert
+// authority barrier. Callers validate their complete canonical result first.
+func (s *Store) commitOperation(ctx context.Context, tx pgx.Tx, local LocalContext, op OperationID, id CartID, action string, hash [32]byte, body []byte, guard authorityGuard) error {
+	_, err := tx.Exec(ctx, `INSERT INTO app.cart_operations(restaurant_id,conversation_id,operation_id,cart_id,action,fingerprint,result,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, s.restaurant, local.conversation.value, op.value, id.value, action, hash[:], string(body), time.Now().UTC())
+	if err != nil {
+		return ErrUnavailable
+	}
+	if err = checkAuthority(guard); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // Create serializes on an existing conversation before a draft exists. Another
