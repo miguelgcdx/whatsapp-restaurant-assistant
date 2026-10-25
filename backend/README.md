@@ -68,6 +68,11 @@ passed for this bounded LOCAL scope. The [final evidence](docs/cart-summary-prev
 keeps their attribution, integrity limits and historical quota failure explicit;
 it does not imply downstream or production approval.
 
+The isolated [offline-tested CommandCode Go boundary](docs/commandcode.md) adds a
+bounded one-turn client and fabricated-key wire tests for the selected model. It
+is not wired into this pipeline, executes no tools, and proves no live gateway or
+account compatibility. The guide's native example uses an injected transport only.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.
