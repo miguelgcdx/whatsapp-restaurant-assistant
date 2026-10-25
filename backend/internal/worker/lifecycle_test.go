@@ -109,8 +109,26 @@ func TestSocketDirectoryAndLockGuards(t *testing.T) {
 	if err := os.Mkdir(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.Run(context.Background(), newStore(), senderFunc(accepted), worker.Options{SocketPath: filepath.Join(dir, "w.sock")}); err == nil {
-		t.Fatal("public directory accepted")
+	// Mkdir's requested mode is filtered by umask: establish the public fixture
+	// explicitly, or umask 077 turns this negative case into a valid worker.
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0755 {
+		t.Fatalf("public directory fixture must have mode 0755: info=%v err=%v", info, err)
+	}
+	publicPath := filepath.Join(dir, "w.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	err := worker.Run(ctx, newStore(), senderFunc(accepted), worker.Options{SocketPath: publicPath})
+	contextErr := ctx.Err()
+	cancel()
+	if contextErr != nil || err == nil || err.Error() != "socket directory must be private and same-user" {
+		t.Fatalf("expected public-directory guard denial: err=%v context=%v", err, contextErr)
+	}
+	for _, path := range []string{publicPath, publicPath + ".lock"} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("public-directory rejection left %s: %v", path, err)
+		}
 	}
 	private := filepath.Join(testsocket.Dir(t), "private")
 	if err := os.Mkdir(private, 0700); err != nil {
@@ -124,8 +142,18 @@ func TestSocketDirectoryAndLockGuards(t *testing.T) {
 	if err := os.Symlink(target, path+".lock"); err != nil {
 		t.Fatal(err)
 	}
-	if err := worker.Run(context.Background(), newStore(), senderFunc(accepted), worker.Options{SocketPath: path}); err == nil {
-		t.Fatal("symlink lock accepted")
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	err = worker.Run(ctx, newStore(), senderFunc(accepted), worker.Options{SocketPath: path})
+	contextErr = ctx.Err()
+	cancel()
+	if contextErr != nil || err == nil || err.Error() != "cannot open socket lock" {
+		t.Fatalf("expected symlink-lock guard denial: err=%v context=%v", err, contextErr)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("symlink-lock rejection left a socket: %v", err)
+	}
+	if link, err := os.Readlink(path + ".lock"); err != nil || link != target {
+		t.Fatalf("lock symlink changed: target=%q err=%v", link, err)
 	}
 	if b, err := os.ReadFile(target); err != nil || string(b) != "keep" {
 		t.Fatal("lock target changed")
