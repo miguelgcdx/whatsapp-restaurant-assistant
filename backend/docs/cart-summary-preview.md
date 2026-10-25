@@ -254,6 +254,9 @@ Earlier increments' local proof dispositions were not reused.
 
 ## Final LOCAL evidence
 
+The full-suite commands below are historical execution evidence. For current
+verification commands and budgets, see the [backend README](../README.md#verify-the-complete-local-loop).
+
 Parent full checks on `go1.27.3-X:nodwarf5 linux/amd64` each exited **0** in one
 173-second run, using the prepared offline environment above:
 

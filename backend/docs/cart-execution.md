@@ -204,6 +204,9 @@ are historical and do not waive this increment's evidence requirements.
 
 ## Final local evidence and disposition
 
+The full-suite commands below are historical execution evidence. For current
+verification commands and budgets, see the [backend README](../README.md#verify-the-complete-local-loop).
+
 Final parent checks on Go `go1.27.3-X:nodwarf5 linux/amd64`, using the prepared
 offline environment above, each exited **0**:
 

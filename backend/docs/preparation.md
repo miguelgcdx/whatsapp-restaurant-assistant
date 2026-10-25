@@ -102,6 +102,9 @@ multi-million-entry snapshot just to exhaust duration capacity.
 
 ## Observed local evidence
 
+The full-suite commands below are historical execution evidence. For current
+verification commands and budgets, see the [backend README](../README.md#verify-the-complete-local-loop).
+
 The public behavior tests were authored before implementation. Initial RED was a
 compile failure (`no non-test Go files`), not observed runtime failures for every
 case. Focused normal/race tests and vet passed; a parent focused spotcheck also

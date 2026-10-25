@@ -82,8 +82,15 @@ export GOTOOLCHAIN=local GOCACHE="$PWD/.cache/build"
 export GOPATH="$PWD/.cache/gopath" GOMODCACHE="$PWD/.cache/modules"
 go test -count=1 -timeout=120s ./...
 go vet ./...
-go test -race -count=1 -timeout=120s ./...
+go test -race -count=1 -timeout=180s ./...
 ```
+
+The full race suite uses a 180-second per-package test-runner budget for
+race-instrumented real PostgreSQL integration work; the normal suite stays at
+120 seconds. All tests, assertions and internal 3-second authority-observer
+deadlines remain unchanged. This budget is not a production request, lease or
+order-policy timeout, a quality waiver, or evidence that a run passed. Historical
+120-second executions and failures remain recorded unchanged.
 
 The process seam test builds and starts the actual API, worker and explicit
 migration command. It exercises concurrent replay, persistence while the worker
