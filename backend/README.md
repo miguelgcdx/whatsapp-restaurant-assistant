@@ -50,6 +50,12 @@ for this native LOCAL scope. The [final evidence](docs/cart-fulfillment.md#final
 separates those executions, adopted regression probes and bounded integrity claims;
 it does not imply production or downstream ordering approval.
 
+The additive [local provisional preparation calculator](docs/preparation.md)
+models three parallel ten-minute slots from explicit native snapshots. It returns
+provisional preparation-only readiness, or no estimate for overdue preparation,
+without changing statuses or blocking submissions. This is not real-order,
+confirmation, summary, HTTP or CLI integration.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.
