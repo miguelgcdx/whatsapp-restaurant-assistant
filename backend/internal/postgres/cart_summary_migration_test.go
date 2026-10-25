@@ -161,8 +161,9 @@ func TestCartSummaryMigrationPreservesPopulatedV7(t *testing.T) {
 	if e = conn.QueryRow(ctx, `SELECT count(*) FROM app.cart_summary_previews`).Scan(&n); e != nil || n != 0 {
 		t.Fatalf("new preview table %d %v", n, e)
 	}
-	if e = conn.QueryRow(ctx, `SELECT max(version_id) FROM app.goose_db_version`).Scan(&v); e != nil || v != 8 {
-		t.Fatalf("v8 %d %v", v, e)
+	var applied bool
+	if e = conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.goose_db_version WHERE version_id=8 AND is_applied)`).Scan(&applied); e != nil || !applied {
+		t.Fatalf("v8 applied %v %v", applied, e)
 	}
 	if !reflect.DeepEqual(before, hashes()) {
 		t.Fatal("upgrade changed old bytes/fingerprints/counters")
