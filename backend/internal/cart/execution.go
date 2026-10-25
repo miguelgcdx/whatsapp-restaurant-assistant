@@ -16,9 +16,10 @@ import (
 // Call is a closed native descriptor. Parameters contain no actor, source,
 // runtime slot, claim, or operation nonce. Its zero value is invalid.
 type Call struct {
-	req    request
-	action Action
-	draft  *draftRequest
+	req     request
+	action  Action
+	draft   *draftRequest
+	preview *summaryPreviewRequest
 }
 
 func CreateCall() Call { return Call{req: request{Action: "create", Targets: []string{}}} }
@@ -147,6 +148,9 @@ func decodeCall(body string) (Call, error) {
 	if json.Unmarshal([]byte(body), &kind) != nil {
 		return Call{}, ErrStoredData
 	}
+	if kind.Action == "capture_preview" || kind.Action == "read_preview" {
+		return decodeSummaryPreviewCall(body)
+	}
 	if kind.Action == "set_fulfillment" || kind.Action == "quote" {
 		return decodeDraftCall(body)
 	}
@@ -226,7 +230,7 @@ func (s *Store) Execute(ctx context.Context, local LocalContext, execution Execu
 	if err != nil {
 		return Result{}, err
 	}
-	if call.draft != nil {
+	if call.draft != nil || call.preview != nil {
 		return Result{}, ErrInput
 	}
 	switch call.req.Action {
@@ -246,7 +250,7 @@ func (s *Store) Execute(ctx context.Context, local LocalContext, execution Execu
 	}
 }
 
-// loadExecution is shared by both result seams: canonical plan and actual job
+// loadExecution is shared by all result seams: canonical plan and actual job
 // authority are always loaded under the same locks in the cart transaction.
 func (s *Store) loadExecution(ctx context.Context, tx pgx.Tx, local LocalContext, execution Execution, job foundation.Job) (Call, authorityGuard, error) {
 	var restaurant, conversation string

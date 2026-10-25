@@ -82,6 +82,13 @@ an old-version direct edit becomes stale after fulfillment selection.
 `Execute` rejects rich calls with `ErrInput`; `ExecuteDraft` rejects legacy calls
 with `ErrInput`. Both return zero business output before domain effects. Their
 shared plan/job loader reuses whole-event registration and actual claim authority.
+The additive [immutable LOCAL preview seam](cart-summary-preview.md) captures
+stored unit names/notes, selection and quote through a third result seam using the
+same transaction-local quote helper. Old codecs and fresh-quote behavior are
+preserved. Both old seams reject preview descriptors with `ErrInput`/zero output;
+preview execution rejects old descriptors. Migration 8 is additive; the final
+historical evidence below is not proof of the new preview candidate. No real
+workload, presentation, confirmation or submission is implied.
 
 Fulfillment mutations save a complete historical rich result in the **same**
 `cart_operations` identity namespace as old direct/bound mutations. Exact replay

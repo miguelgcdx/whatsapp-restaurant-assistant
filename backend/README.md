@@ -56,6 +56,18 @@ provisional preparation-only readiness, or no estimate for overdue preparation,
 without changing statuses or blocking submissions. This is not real-order,
 confirmation, summary, HTTP or CLI integration.
 
+The additive [immutable LOCAL summary preview seam](docs/cart-summary-preview.md)
+captures exact names, stored unit prices/notes, fulfillment and server totals from
+one guarded transaction, then reads or replays that immutable snapshot. Migration
+8 adds one empty scoped preview table; captures share the existing mutation ledger
+and do not increment cart version. Preparation estimate stays null with explicit
+`workload_not_connected`; no invented empty kitchen or workload timestamp is used.
+This is **not complete `prepare_summary`**, presentation evidence, confirmation or
+submission. Parent full normal/vet/race checks and one final independent assessment
+passed for this bounded LOCAL scope. The [final evidence](docs/cart-summary-preview.md#final-local-evidence)
+keeps their attribution, integrity limits and historical quota failure explicit;
+it does not imply downstream or production approval.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.

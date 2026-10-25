@@ -118,6 +118,9 @@ func QuoteCall(id CartID) (Call, error) {
 	return Call{req: request{Action: "quote", Cart: id.value}, draft: &draftRequest{"draft-v1", "quote", id.value, 0, nil}}, nil
 }
 func encodeCall(c Call) ([]byte, error) {
+	if c.preview != nil {
+		return json.Marshal(c.preview)
+	}
 	if c.draft != nil {
 		return json.Marshal(c.draft)
 	}
@@ -260,6 +263,57 @@ func (s *Store) replayDraft(ctx context.Context, tx pgx.Tx, local LocalContext, 
 	return out, true, nil
 }
 
+// loadDraftQuote shares transaction-local settings, selection validation and pure
+// quote construction with preview capture. It never opens a second transaction.
+func (s *Store) loadDraftQuote(ctx context.Context, tx pgx.Tx, local LocalContext, snapshot Snapshot, proposed *fulfillmentWire, guard authorityGuard) (Fulfillment, DraftQuote, error) {
+	var c string
+	var exponent int16
+	var fee, settingsVersion int64
+	if err := tx.QueryRow(ctx, `SELECT currency,currency_exponent,flat_fee_minor,version FROM app.restaurant_settings WHERE restaurant_id=$1 FOR SHARE`, s.restaurant).Scan(&c, &exponent, &fee, &settingsVersion); err != nil {
+		return Fulfillment{}, DraftQuote{}, unavailable(err)
+	}
+	if c != snapshot.Currency || exponent != snapshot.Exponent || fee < 0 || settingsVersion < 0 {
+		return Fulfillment{}, DraftQuote{}, ErrStoredData
+	}
+	var selected Fulfillment
+	var err error
+	if proposed != nil {
+		selected, err = parseFulfillment(*proposed)
+	} else {
+		var kind string
+		var address, phone pgtype.Text
+		err = tx.QueryRow(ctx, `SELECT kind,address,recipient_phone FROM app.cart_fulfillments WHERE restaurant_id=$1 AND conversation_id=$2 AND cart_id=$3 FOR UPDATE`, s.restaurant, local.conversation.value, snapshot.ID.value).Scan(&kind, &address, &phone)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if e := checkAuthority(guard); e != nil {
+				return Fulfillment{}, DraftQuote{}, e
+			}
+			return Fulfillment{}, DraftQuote{}, ErrFulfillmentRequired
+		}
+		if err != nil {
+			return Fulfillment{}, DraftQuote{}, ErrUnavailable
+		}
+		switch kind {
+		case "pickup":
+			if address.Valid || phone.Valid {
+				return Fulfillment{}, DraftQuote{}, ErrStoredData
+			}
+			selected = PickupFulfillment()
+		case "delivery":
+			if !address.Valid || !phone.Valid {
+				return Fulfillment{}, DraftQuote{}, ErrStoredData
+			}
+			selected, err = DeliveryFulfillment(address.String, phone.String)
+		default:
+			return Fulfillment{}, DraftQuote{}, ErrStoredData
+		}
+	}
+	if err != nil {
+		return Fulfillment{}, DraftQuote{}, ErrStoredData
+	}
+	quote, err := quoteSnapshot(snapshot, selected, fee, settingsVersion)
+	return selected, quote, err
+}
+
 // ExecuteDraft accepts ONLY rich descriptors. It shares registration, actual job
 // loading and authority barriers with Execute; neither seam dispatches workers.
 func (s *Store) ExecuteDraft(ctx context.Context, local LocalContext, execution Execution, job foundation.Job) (DraftResult, error) {
@@ -298,53 +352,10 @@ func (s *Store) ExecuteDraft(ctx context.Context, local LocalContext, execution 
 	if req.Action == "set_fulfillment" && (snapshot.Version.value != req.Expected || req.Expected == math.MaxInt64) {
 		return DraftResult{}, ErrStale
 	}
-	var c string
-	var exponent int16
-	var fee, settingsVersion int64
-	if err = tx.QueryRow(ctx, `SELECT currency,currency_exponent,flat_fee_minor,version FROM app.restaurant_settings WHERE restaurant_id=$1 FOR SHARE`, s.restaurant).Scan(&c, &exponent, &fee, &settingsVersion); err != nil {
-		return DraftResult{}, unavailable(err)
-	}
-	if c != snapshot.Currency || exponent != snapshot.Exponent || fee < 0 || settingsVersion < 0 {
-		return DraftResult{}, ErrStoredData
-	}
-	var selected Fulfillment
-	if req.Action == "set_fulfillment" {
-		selected, err = parseFulfillment(*req.Fulfillment)
-	} else {
-		var kind string
-		var address, phone pgtype.Text
-		err = tx.QueryRow(ctx, `SELECT kind,address,recipient_phone FROM app.cart_fulfillments WHERE restaurant_id=$1 AND conversation_id=$2 AND cart_id=$3 FOR UPDATE`, s.restaurant, local.conversation.value, req.Cart).Scan(&kind, &address, &phone)
-		if errors.Is(err, pgx.ErrNoRows) {
-			if e := guard(); e != nil {
-				return DraftResult{}, e
-			}
-			return DraftResult{}, ErrFulfillmentRequired
-		}
-		if err != nil {
-			return DraftResult{}, ErrUnavailable
-		}
-		switch kind {
-		case "pickup":
-			if address.Valid || phone.Valid {
-				return DraftResult{}, ErrStoredData
-			}
-			selected = PickupFulfillment()
-		case "delivery":
-			if !address.Valid || !phone.Valid {
-				return DraftResult{}, ErrStoredData
-			}
-			selected, err = DeliveryFulfillment(address.String, phone.String)
-		default:
-			return DraftResult{}, ErrStoredData
-		}
-	}
-	if err != nil {
-		return DraftResult{}, ErrStoredData
-	}
+	selected, quote, err := s.loadDraftQuote(ctx, tx, local, snapshot, req.Fulfillment, guard)
 	if req.Action == "set_fulfillment" {
 		snapshot.Version = Version{req.Expected + 1}
 	}
-	quote, err := quoteSnapshot(snapshot, selected, fee, settingsVersion)
 	if err != nil {
 		return DraftResult{}, err
 	}

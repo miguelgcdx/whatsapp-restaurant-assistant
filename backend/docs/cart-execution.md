@@ -79,6 +79,15 @@ separate fee/total and settings basis. The two result seams reject each other's
 call kinds with `ErrInput` before domain effects. Neither introduces implicit
 pickup, confirmation, receipt or order.
 
+The additive [immutable LOCAL preview seam](cart-summary-preview.md) uses
+`CaptureSummaryPreviewCall`, `ReadSummaryPreviewCall` and `ExecuteSummaryPreview`.
+It shares the same plan/job authority and operation namespace, but stores complete
+historical local previews rather than fresh subtotal reads or draft quotes. All
+three result seams reject the other call families with `ErrInput`/zero output.
+Migration 8 adds preview storage; this is not complete `prepare_summary`, workload
+integration, presentation or submission. Historical final evidence below concerns
+the earlier execution increment, not this new preview candidate.
+
 A cart commit followed by process failure before job completion can be replayed
 under a newly claimed generation with the same registered plan. The old generation
 cannot retrieve even a cached mutation result. Completed, failed, expired,
