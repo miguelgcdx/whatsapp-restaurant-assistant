@@ -5,6 +5,15 @@ conversation**. It has native Go interfaces only: no HTTP/customer endpoint,
 WhatsApp/model adapter, order submission, receipts, dashboard, or new CLI.
 A subtotal is not a final order total.
 
+The additive [local conversation-to-cart execution bridge](cart-execution.md)
+binds already persisted synthetic events and actual job claims to explicitly
+provisioned local contexts. It offers immutable server-owned call plans and
+same-transaction authority guards, not automatic worker dispatch or customer
+identity. Direct `Create`, `Apply`, `Read` and failed-key reuse below retain their
+existing semantics. Migration 6 adds two empty plan tables; these are separate
+from committed mutation results. See the bridge guide for API/errors, trusted-clock
+linearization, retry behavior and the new focused proof boundary.
+
 ## Ownership and setup
 
 Apply the existing explicit `postgres.Migrate` to an owned loopback foundation

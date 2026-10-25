@@ -24,6 +24,19 @@ runtime tests. The [accepted LOCAL-only proof limitations](docs/cart.md#observed
 retain missing independent runtime and supplemental pre-implementation RED history;
 they are not production approval or a future waiver.
 
+The additive [local conversation-to-cart execution bridge](docs/cart-execution.md)
+now connects an already persisted synthetic event, explicit local fixture plan,
+and actual public job claim to native cart create/edit/read operations. Migration 6
+adds two empty immutable plan tables, with stable per-event/slot operation IDs.
+Authority and late-expiry/cancellation rollback share the cart transaction; bound
+reads remain fresh, and direct cart APIs retain their existing semantics. This is
+not automatic worker routing, event-text interpretation, customer authentication,
+confirmation or order submission. New focused writer evidence is separate from the
+historical cart-core checks above. This increment's final parent normal/vet/race
+checks passed. Independent setup failed offline before probes; the human accepted
+that explicitly documented LOCAL-only proof limitation, not an independent PASS.
+See the [execution evidence](docs/cart-execution.md#final-local-evidence-and-disposition).
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.

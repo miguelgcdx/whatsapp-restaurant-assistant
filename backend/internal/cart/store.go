@@ -286,7 +286,19 @@ func (s *Store) replay(ctx context.Context, tx pgx.Tx, local LocalContext, op Op
 	}
 	return out, true, nil
 }
-func (s *Store) commit(ctx context.Context, tx pgx.Tx, local LocalContext, op OperationID, req request, snapshot Snapshot) (Result, error) {
+
+// A nil guard preserves direct cart semantics. Bound execution supplies a
+// same-transaction authority check, including after the result insert can block.
+type authorityGuard func() error
+
+func checkAuthority(guard authorityGuard) error {
+	if guard != nil {
+		return guard()
+	}
+	return nil
+}
+
+func (s *Store) commit(ctx context.Context, tx pgx.Tx, local LocalContext, op OperationID, req request, snapshot Snapshot, guard authorityGuard) (Result, error) {
 	result := Result{op, snapshot}
 	b, err := encodeResult(result)
 	if err != nil {
@@ -296,6 +308,9 @@ func (s *Store) commit(ctx context.Context, tx pgx.Tx, local LocalContext, op Op
 	_, err = tx.Exec(ctx, `INSERT INTO app.cart_operations(restaurant_id,conversation_id,operation_id,cart_id,action,fingerprint,result,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, s.restaurant, local.conversation.value, op.value, snapshot.ID.value, req.Action, hash[:], string(b), time.Now().UTC())
 	if err != nil {
 		return Result{}, ErrUnavailable
+	}
+	if err = checkAuthority(guard); err != nil {
+		return Result{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return Result{}, ErrUnavailable
@@ -315,12 +330,22 @@ func (s *Store) Create(ctx context.Context, local LocalContext, op OperationID) 
 		return Result{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return s.create(ctx, tx, local, op, nil)
+}
+
+func (s *Store) create(ctx context.Context, tx pgx.Tx, local LocalContext, op OperationID, guard authorityGuard) (Result, error) {
 	req := request{Action: "create", Targets: []string{}}
 	if previous, ok, err := s.replay(ctx, tx, local, op, req); err != nil || ok {
-		return previous, err
+		if err == nil {
+			err = checkAuthority(guard)
+		}
+		if err != nil {
+			return Result{}, err
+		}
+		return previous, nil
 	}
 	var raw string
-	err = tx.QueryRow(ctx, `SELECT id::text FROM app.carts WHERE restaurant_id=$1 AND conversation_id=$2 FOR UPDATE`, s.restaurant, local.conversation.value).Scan(&raw)
+	err := tx.QueryRow(ctx, `SELECT id::text FROM app.carts WHERE restaurant_id=$1 AND conversation_id=$2 FOR UPDATE`, s.restaurant, local.conversation.value).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var c string
 		var e int16
@@ -335,6 +360,9 @@ func (s *Store) Create(ctx context.Context, local LocalContext, op OperationID) 
 			return Result{}, err
 		}
 		raw = id.value
+		if err = checkAuthority(guard); err != nil {
+			return Result{}, err
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO app.carts(id,restaurant_id,conversation_id,currency,exponent,version,created_at) VALUES($1,$2,$3,$4,$5,0,$6)`, raw, s.restaurant, local.conversation.value, c, e, time.Now().UTC())
 		if err != nil {
 			return Result{}, ErrUnavailable
@@ -350,7 +378,10 @@ func (s *Store) Create(ctx context.Context, local LocalContext, op OperationID) 
 	if err != nil {
 		return Result{}, err
 	}
-	return s.commit(ctx, tx, local, op, req, out)
+	if err = checkAuthority(guard); err != nil {
+		return Result{}, err
+	}
+	return s.commit(ctx, tx, local, op, req, out, guard)
 }
 
 func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, id CartID, v Version, a Action) (Result, error) {
@@ -366,8 +397,18 @@ func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, i
 		return Result{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return s.apply(ctx, tx, local, op, id, v, a, req, nil)
+}
+
+func (s *Store) apply(ctx context.Context, tx pgx.Tx, local LocalContext, op OperationID, id CartID, v Version, a Action, req request, guard authorityGuard) (Result, error) {
 	if previous, ok, err := s.replay(ctx, tx, local, op, req); err != nil || ok {
-		return previous, err
+		if err == nil {
+			err = checkAuthority(guard)
+		}
+		if err != nil {
+			return Result{}, err
+		}
+		return previous, nil
 	}
 	out, err := s.read(ctx, tx, local, id)
 	if err != nil {
@@ -422,6 +463,9 @@ func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, i
 		if _, err = encodeResult(Result{op, out}); err != nil {
 			return Result{}, err
 		}
+		if err = checkAuthority(guard); err != nil {
+			return Result{}, err
+		}
 		for n, u := range added {
 			_, err = tx.Exec(ctx, `INSERT INTO app.cart_units(id,restaurant_id,conversation_id,cart_id,menu_id,position,price_minor,currency,exponent,note,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, u.ID.value, s.restaurant, local.conversation.value, id.value, u.MenuID.value, position+int64(n)+1, u.PriceMinor, u.Currency, u.Exponent, u.Note, time.Now().UTC())
 			if err != nil {
@@ -431,6 +475,9 @@ func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, i
 	case removeAction:
 		out, err = editTargets(out, action.units, "", true)
 		if err != nil {
+			return Result{}, err
+		}
+		if err = checkAuthority(guard); err != nil {
 			return Result{}, err
 		}
 		for _, uid := range action.units {
@@ -445,6 +492,9 @@ func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, i
 		}
 		out.Version = Version{v.value + 1}
 		if _, err = encodeResult(Result{op, out}); err != nil {
+			return Result{}, err
+		}
+		if err = checkAuthority(guard); err != nil {
 			return Result{}, err
 		}
 		for _, uid := range action.units {
@@ -467,7 +517,7 @@ func (s *Store) Apply(ctx context.Context, local LocalContext, op OperationID, i
 	if tag.RowsAffected() != 1 {
 		return Result{}, ErrStale
 	}
-	return s.commit(ctx, tx, local, op, req, out)
+	return s.commit(ctx, tx, local, op, req, out, guard)
 }
 func editTargets(out Snapshot, ids []UnitID, note string, remove bool) (Snapshot, error) {
 	wanted := make(map[UnitID]bool, len(ids))
