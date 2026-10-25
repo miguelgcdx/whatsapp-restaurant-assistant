@@ -98,6 +98,17 @@ exclusive same-user local lock with safe file handling is acceptable. Socket
 payloads are ignored. Close the socket on shutdown and remove only owned
 resources. Do not add a daemon or touch system/home configuration.
 
+Socket pathname visibility is not a readiness signal: binding publishes the
+pathname before initialization captures its inode and applies permissions. Tests
+that replace the pathname must first observe Run entering its startup store scan,
+which occurs after socket initialization. Await Run's actual return before
+asserting shutdown effects; a fixed sleep does not prove completion. The worker
+uses the persistent exclusive lock to exclude conforming workers and compares the
+captured inode before unlinking at shutdown. A replacement installed after that
+initialization is preserved. This is not protection against a hostile same-UID
+process racing pathname operations during initialization or the check/unlink
+sequence, and it does not identify the exact interleaving of a historical failure.
+
 `NewFakeSender` only accepts explicit http(s) numeric-loopback URLs with no URL
 credentials. Disable environment proxies and redirects, bound dial/request time
 and response bodies (65,536 bytes). POST JSON `event_id`, `effect_id`, `text`;

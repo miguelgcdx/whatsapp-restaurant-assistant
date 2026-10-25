@@ -38,9 +38,46 @@ func TestCancellationDuringSend(t *testing.T) {
 		t.Fatal("send context not cancelled")
 	}
 }
+
+// A published socket is not proof that Run has finished socket initialization.
+// Hold the first store call so the helper cannot observe startup progress yet.
+func TestStartWaitsForRunStartup(t *testing.T) {
+	s := newStore()
+	s.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+	path := filepath.Join(testsocket.Dir(t), "private", "worker.sock")
+	returned := make(chan struct{})
+	go func() {
+		start(t, s, worker.Options{SocketPath: path}, senderFunc(accepted))
+		close(returned)
+	}()
+	waitSocket(t, path)
+	premature := false
+	select {
+	case <-returned:
+		premature = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.mu.Unlock()
+	locked = false
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("start did not observe Run startup after releasing the store")
+	}
+	if premature {
+		t.Fatal("start reported readiness from pathname visibility before Run startup was observed")
+	}
+}
+
 func TestForeignReplacementSurvivesShutdown(t *testing.T) {
 	s := newStore()
-	path, cancel, _ := start(t, s, worker.Options{}, senderFunc(accepted))
+	path, cancel, done := start(t, s, worker.Options{}, senderFunc(accepted))
 	// Rename preserves the old inode while simulating a same-user replacement.
 	old := path + ".old"
 	if err := os.Rename(path, old); err != nil {
@@ -51,10 +88,20 @@ func TestForeignReplacementSurvivesShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replacement.Close()
+	foreign, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cancel()
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not finish shutdown")
+	}
 	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSocket == 0 {
 		t.Fatal("foreign socket removed", err)
+	} else if !os.SameFile(foreign, info) || info.Mode() != foreign.Mode() {
+		t.Fatal("foreign socket identity or permissions changed")
 	}
 }
 func TestSocketDirectoryAndLockGuards(t *testing.T) {

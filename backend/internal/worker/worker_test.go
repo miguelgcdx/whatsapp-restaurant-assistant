@@ -27,6 +27,7 @@ type memoryStore struct {
 	pending   bool
 	delivery  bool
 	calls     int
+	started   chan struct{}
 	completed chan string
 	finished  chan foundation.SendResult
 	fail      bool
@@ -35,6 +36,9 @@ type memoryStore struct {
 func (s *memoryStore) ClaimJob(ctx context.Context, now time.Time, lease time.Duration) (foundation.Job, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.calls == 0 {
+		close(s.started)
+	}
 	s.calls++
 	if s.fail {
 		return foundation.Job{}, false, errors.New("unavailable")
@@ -80,7 +84,7 @@ func (f senderFunc) Send(c context.Context, d foundation.Delivery) foundation.Se
 	return f(c, d)
 }
 func newStore() *memoryStore {
-	return &memoryStore{completed: make(chan string, 10), finished: make(chan foundation.SendResult, 10)}
+	return &memoryStore{started: make(chan struct{}), completed: make(chan string, 10), finished: make(chan foundation.SendResult, 10)}
 }
 func waitSocket(t *testing.T, path string) {
 	t.Helper()
@@ -93,26 +97,38 @@ func waitSocket(t *testing.T, path string) {
 	}
 	t.Fatal("socket not ready")
 }
-func start(t *testing.T, s *memoryStore, o worker.Options, sender worker.Sender) (string, context.CancelFunc, <-chan error) {
+func start(t *testing.T, s *memoryStore, o worker.Options, sender worker.Sender) (string, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	if o.SocketPath == "" {
 		o.SocketPath = filepath.Join(testsocket.Dir(t), "private", "worker.sock")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- worker.Run(ctx, s, sender, o) }()
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = worker.Run(ctx, s, sender, o)
+		close(done)
+	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case e := <-done:
-			if e != nil {
-				t.Error(e)
+		case <-done:
+			if runErr != nil {
+				t.Error(runErr)
 			}
 		case <-time.After(time.Second):
 			t.Error("worker did not stop")
 		}
 	})
-	waitSocket(t, o.SocketPath)
+	// Run enters the store only after capturing and protecting its socket.
+	// Pathname visibility alone precedes that ownership initialization.
+	select {
+	case <-s.started:
+	case <-done:
+		t.Fatalf("worker stopped before startup: %v", runErr)
+	case <-time.After(time.Second):
+		t.Fatal("worker startup not observed")
+	}
 	return o.SocketPath, cancel, done
 }
 func accepted(context.Context, foundation.Delivery) foundation.SendResult {
