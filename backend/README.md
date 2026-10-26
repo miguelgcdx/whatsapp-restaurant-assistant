@@ -73,6 +73,15 @@ bounded one-turn client and fabricated-key wire tests for the selected model. It
 is not wired into this pipeline, executes no tools, and proves no live gateway or
 account compatibility. The guide's native example uses an injected transport only.
 
+The optional [claim-bound durable LOCAL menu reply seam](docs/claim-bound-dispatch.md)
+adds native `RunAndQueue`, historical `ReadQueued`, and one-attempt `DispatchOne`.
+Migration 10 binds AI intents to source/control/creation claims, isolates them
+from legacy acknowledgement scheduling, and adds known-no-I/O suppression.
+The explicitly configured coordinator uses the existing injected fake sender;
+it does **not** route the default worker through AI or add live-provider/UI/order
+integration. Unknown sends are never automatically retried. Focused D2 evidence
+is not parent full-suite/independent approval; see the guide's evidence limits.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.
