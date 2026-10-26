@@ -138,13 +138,7 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 	if err = legacy.CompleteJob(ctx, job, "ack", now); err != nil {
 		t.Fatal(err)
 	}
-	delivery, ok, err := legacy.ClaimDelivery(ctx, now, time.Minute)
-	if err != nil || !ok {
-		t.Fatal(err)
-	}
-	if err = legacy.FinishDelivery(ctx, delivery, foundation.SendResult{State: foundation.SendAccepted, ProviderID: "fixture"}, now); err != nil {
-		t.Fatal(err)
-	}
+	freezePre10AcceptedDelivery(t, dsn, event.ID, "fixture", now)
 	beforeEvent, err := legacy.Inspect(ctx, event.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +152,7 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 		out := map[string]string{}
 		for _, table := range []string{"conversation_sequences", "inbound_events", "jobs", "outbox", "send_attempts", "restaurants", "staff_memberships", "restaurant_settings", "menu_items", "operations", "cart_conversations", "carts", "cart_units", "cart_operations"} {
 			var hash string
-			if e := conn.QueryRow(ctx, `SELECT count(*)::text||':'||md5(COALESCE(string_agg(row_to_json(r)::text,',' ORDER BY row_to_json(r)::text),'')) FROM app.`+table+` r`).Scan(&hash); e != nil {
+			if e := conn.QueryRow(ctx, legacyMigrationFingerprintSQL(table)).Scan(&hash); e != nil {
 				t.Fatal(e)
 			}
 			out[table] = hash
@@ -182,6 +176,7 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 	if !reflect.DeepEqual(before, hashes()) {
 		t.Fatal("upgrade changed historical data/counters")
 	}
+	assertMigratedLegacyMetadata(t, conn)
 	read, err := s.Read(ctx, local, base.Cart.ID)
 	if err != nil || !reflect.DeepEqual(read, noted.Cart) {
 		t.Fatalf("snapshot=%+v %v", read, err)
@@ -216,4 +211,5 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 	if !reflect.DeepEqual(before, hashes()) {
 		t.Fatal("read/replay changed historical counters")
 	}
+	assertCurrentLegacyDelivery(t, legacy)
 }

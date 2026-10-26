@@ -37,12 +37,12 @@ SELECT sqlc.arg(id)::uuid, j.event_id, sqlc.arg(content)::text, 'pending', sqlc.
 
 -- name: ExpireSends :many
 UPDATE app.outbox SET state='unknown',lease_until=NULL
-WHERE state='sending' AND lease_until <= $1 RETURNING id,attempt;
+WHERE kind='legacy_ack' AND state='sending' AND lease_until <= $1 RETURNING id,attempt;
 
 -- name: ClaimDelivery :one
 WITH picked AS (
  SELECT q.id FROM app.outbox q JOIN app.inbound_events i ON i.id=q.event_id
- WHERE q.state='pending' AND q.due_at <= sqlc.arg(now_at)
+ WHERE q.kind='legacy_ack' AND q.state='pending' AND q.due_at <= sqlc.arg(now_at)
  AND NOT EXISTS (
   SELECT 1 FROM app.outbox previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('pending','sending','unknown')
@@ -58,7 +58,7 @@ INSERT INTO app.send_attempts (outbox_id,attempt,generation,started_at,outcome) 
 
 -- name: SetDeliveryState :execrows
 UPDATE app.outbox SET state=sqlc.arg(state)::text,provider_id=sqlc.arg(provider_id),lease_until=NULL
-WHERE id=sqlc.arg(id) AND generation=sqlc.arg(generation) AND state='sending' AND lease_until > sqlc.arg(now_at);
+WHERE kind='legacy_ack' AND id=sqlc.arg(id) AND generation=sqlc.arg(generation) AND state='sending' AND lease_until > sqlc.arg(now_at);
 
 -- name: FinishSendAttempt :exec
 UPDATE app.send_attempts SET outcome=$3,provider_id=$4,finished_at=$5 WHERE outbox_id=$1 AND attempt=$2;
@@ -73,11 +73,11 @@ SELECT min(at)::timestamptz AS due_at FROM (
  UNION ALL SELECT lease_until FROM app.jobs WHERE state='leased'
  UNION ALL
  SELECT o.due_at FROM app.outbox o JOIN app.inbound_events i ON i.id=o.event_id
- WHERE o.state='pending' AND NOT EXISTS (
+ WHERE o.kind='legacy_ack' AND o.state='pending' AND NOT EXISTS (
   SELECT 1 FROM app.outbox previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('pending','sending','unknown')
  )
- UNION ALL SELECT lease_until FROM app.outbox WHERE state='sending'
+ UNION ALL SELECT lease_until FROM app.outbox WHERE kind='legacy_ack' AND state='sending'
 ) work;
 
 -- name: InspectEvent :one

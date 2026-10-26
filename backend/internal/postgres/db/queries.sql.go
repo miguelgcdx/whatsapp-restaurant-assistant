@@ -2,6 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 // source: queries.sql
+// Migration 10 legacy isolation maintained by hand; sqlc was not run.
 
 package db
 
@@ -14,7 +15,7 @@ import (
 const claimDelivery = `-- name: ClaimDelivery :one
 WITH picked AS (
  SELECT q.id FROM app.outbox q JOIN app.inbound_events i ON i.id=q.event_id
- WHERE q.state='pending' AND q.due_at <= $2
+ WHERE q.kind='legacy_ack' AND q.state='pending' AND q.due_at <= $2
  AND NOT EXISTS (
   SELECT 1 FROM app.outbox previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('pending','sending','unknown')
@@ -121,7 +122,7 @@ func (q *Queries) EnsureStaffMembership(ctx context.Context, arg EnsureStaffMemb
 
 const expireSends = `-- name: ExpireSends :many
 UPDATE app.outbox SET state='unknown',lease_until=NULL
-WHERE state='sending' AND lease_until <= $1 RETURNING id,attempt
+WHERE kind='legacy_ack' AND state='sending' AND lease_until <= $1 RETURNING id,attempt
 `
 
 type ExpireSendsRow struct {
@@ -319,11 +320,11 @@ SELECT min(at)::timestamptz AS due_at FROM (
  UNION ALL SELECT lease_until FROM app.jobs WHERE state='leased'
  UNION ALL
  SELECT o.due_at FROM app.outbox o JOIN app.inbound_events i ON i.id=o.event_id
- WHERE o.state='pending' AND NOT EXISTS (
+ WHERE o.kind='legacy_ack' AND o.state='pending' AND NOT EXISTS (
   SELECT 1 FROM app.outbox previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('pending','sending','unknown')
  )
- UNION ALL SELECT lease_until FROM app.outbox WHERE state='sending'
+ UNION ALL SELECT lease_until FROM app.outbox WHERE kind='legacy_ack' AND state='sending'
 ) work
 `
 
@@ -363,7 +364,7 @@ func (q *Queries) RevokeStaffMembership(ctx context.Context, arg RevokeStaffMemb
 
 const setDeliveryState = `-- name: SetDeliveryState :execrows
 UPDATE app.outbox SET state=$1::text,provider_id=$2,lease_until=NULL
-WHERE id=$3 AND generation=$4 AND state='sending' AND lease_until > $5
+WHERE kind='legacy_ack' AND id=$3 AND generation=$4 AND state='sending' AND lease_until > $5
 `
 
 type SetDeliveryStateParams struct {

@@ -144,6 +144,10 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 	if err := jobs.CompleteJob(ctx, job, "exact preexisting reply", now); err != nil {
 		t.Fatal(err)
 	}
+	beforeEvent, err := jobs.Inspect(ctx, event.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +157,7 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 		out := map[string]string{}
 		for _, table := range []string{"conversation_sequences", "inbound_events", "jobs", "outbox", "send_attempts", "restaurants", "staff_memberships", "restaurant_settings", "menu_items", "operations", "cart_conversations", "carts", "cart_units", "cart_operations", "cart_execution_sources", "cart_execution_calls", "cart_fulfillments", "cart_summary_previews"} {
 			var h string
-			if err := conn.QueryRow(ctx, `SELECT count(*)::text||':'||md5(COALESCE(string_agg(row_to_json(r)::text,',' ORDER BY row_to_json(r)::text),'')) FROM app.`+table+` r`).Scan(&h); err != nil {
+			if err := conn.QueryRow(ctx, legacyMigrationFingerprintSQL(table)).Scan(&h); err != nil {
 				t.Fatal(err)
 			}
 			out[table] = h
@@ -180,6 +184,11 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, hashes()) {
 		t.Fatal("upgrade changed old rows")
+	}
+	assertMigratedLegacyMetadata(t, conn)
+	afterEvent, err := jobs.Inspect(ctx, event.ID)
+	if err != nil || !reflect.DeepEqual(afterEvent, beforeEvent) {
+		t.Fatalf("foundation changed=%+v %v", afterEvent, err)
 	}
 	read, err := s.Read(ctx, local, base.Cart.ID)
 	if err != nil || !reflect.DeepEqual(read, selected.Cart) {
@@ -288,4 +297,20 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 		t.Fatal("new controls changed old rows")
 	}
 	t.Log(fmt.Sprintf("populated v8 -> v9 preserved %d legacy table fingerprints; constrained ledger rows=%d", len(before), n))
+	// Only after the final historical comparison, deliver the preserved pending
+	// v8 intent through the current public API on the upgraded schema.
+	delivery, ok, err := jobs.ClaimDelivery(ctx, time.Now(), time.Minute)
+	if err != nil || !ok || delivery.EventID != event.ID || delivery.Text != "exact preexisting reply" || delivery.Generation != 1 || delivery.Attempt != 1 {
+		t.Fatal(delivery, ok, err)
+	}
+	if err := jobs.FinishDelivery(ctx, delivery, foundation.SendResult{State: foundation.SendAccepted, ProviderID: "post-control-provider"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := jobs.Inspect(ctx, event.ID)
+	wantAccepted := beforeEvent
+	wantAccepted.OutboxState = "accepted"
+	wantAccepted.ProviderID = "post-control-provider"
+	if err != nil || !reflect.DeepEqual(accepted, wantAccepted) {
+		t.Fatal(accepted, err)
+	}
 }
