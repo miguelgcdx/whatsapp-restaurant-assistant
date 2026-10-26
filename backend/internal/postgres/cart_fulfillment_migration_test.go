@@ -87,6 +87,7 @@ func TestCartFulfillmentMigrationPreservesPopulatedV6(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	removeLegacyJobFormat := pre11LegacyJobFormat(t, dsn)
 	jobs, e := postgres.Open(ctx, dsn)
 	if e != nil {
 		t.Fatal(e)
@@ -117,6 +118,7 @@ func TestCartFulfillmentMigrationPreservesPopulatedV6(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	removeLegacyJobFormat() // Restore genuine v6 before the historical snapshot and upgrade.
 	conn, e := pgx.Connect(ctx, dsn)
 	if e != nil {
 		t.Fatal(e)
@@ -126,7 +128,7 @@ func TestCartFulfillmentMigrationPreservesPopulatedV6(t *testing.T) {
 		out := map[string]string{}
 		for _, table := range []string{"conversation_sequences", "inbound_events", "jobs", "outbox", "send_attempts", "restaurants", "staff_memberships", "restaurant_settings", "menu_items", "operations", "cart_conversations", "carts", "cart_units", "cart_operations", "cart_execution_sources", "cart_execution_calls"} {
 			var h string
-			if e := conn.QueryRow(ctx, `SELECT count(*)::text||':'||md5(COALESCE(string_agg(row_to_json(r)::text,',' ORDER BY row_to_json(r)::text),'')) FROM app.`+table+` r`).Scan(&h); e != nil {
+			if e := conn.QueryRow(ctx, legacyMigrationFingerprintSQL(table)).Scan(&h); e != nil {
 				t.Fatal(e)
 			}
 			out[table] = h
@@ -144,6 +146,14 @@ func TestCartFulfillmentMigrationPreservesPopulatedV6(t *testing.T) {
 	var n int64
 	if e = conn.QueryRow(ctx, `SELECT count(*) FROM app.cart_fulfillments`).Scan(&n); e != nil || n != 0 {
 		t.Fatalf("new side table %d %v", n, e)
+	}
+	var jobCount int
+	var legacyMetadata bool
+	if e = conn.QueryRow(ctx, `SELECT count(*),
+COALESCE(bool_and(route='legacy_ack' AND restaurant_id IS NULL AND conversation_id IS NULL
+AND admission_mode IS NULL AND admission_version IS NULL AND no_reply_reason IS NULL),false)
+FROM app.jobs`).Scan(&jobCount, &legacyMetadata); e != nil || jobCount == 0 || !legacyMetadata {
+		t.Fatalf("legacy job metadata: count=%d allLegacyUntyped=%v err=%v", jobCount, legacyMetadata, e)
 	}
 	if !reflect.DeepEqual(before, hashes()) {
 		t.Fatal("upgrade changed historical records/bytes/fingerprints")

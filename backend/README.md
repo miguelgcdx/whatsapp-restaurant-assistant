@@ -82,6 +82,10 @@ it does **not** route the default worker through AI or add live-provider/UI/orde
 integration. Unknown sends are never automatically retried. Focused D2 evidence
 is not parent full-suite/independent approval; see the guide's evidence limits.
 
+The [reserved LOCAL menu-message route](docs/local-menu-runtime.md) adds migration
+11 provenance and legacy consumer fencing only. Admission, scoped execution,
+epoch-aware gate integration and a runnable menu host are still pending.
+
 ## Verify the complete local loop
 
 Prerequisites: Go 1.27.3 and local PostgreSQL binaries `initdb`, `pg_ctl`, `createdb`.

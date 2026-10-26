@@ -126,6 +126,7 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer legacy.Close()
+	finishLegacyFormat := pre11LegacyJobFormat(t, dsn)
 	event := foundation.Event{ID: "before-execution", Sender: "sender", Text: "opaque"}
 	now := time.Now()
 	if _, err = legacy.Accept(ctx, event, now); err != nil {
@@ -138,6 +139,7 @@ func TestCartExecutionMigrationPreservesPopulatedV5(t *testing.T) {
 	if err = legacy.CompleteJob(ctx, job, "ack", now); err != nil {
 		t.Fatal(err)
 	}
+	finishLegacyFormat()
 	freezePre10AcceptedDelivery(t, dsn, event.ID, "fixture", now)
 	beforeEvent, err := legacy.Inspect(ctx, event.ID)
 	if err != nil {

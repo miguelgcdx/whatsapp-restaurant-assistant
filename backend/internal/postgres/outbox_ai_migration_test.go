@@ -31,6 +31,7 @@ func TestOutboxAIMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	finishLegacyFormat := pre11LegacyJobFormat(t, dsn)
 	now := time.Now()
 	event := foundation.Event{ID: "legacy-before-ai", Sender: "owned-sender", Text: "question"}
 	if fresh, err := store.Accept(ctx, event, now); err != nil || !fresh {
@@ -44,6 +45,7 @@ func TestOutboxAIMigration(t *testing.T) {
 	if err := store.CompleteJob(ctx, job, reply, now); err != nil {
 		t.Fatal(err)
 	}
+	finishLegacyFormat()
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +219,11 @@ func TestOutboxAISuppressedHistoryDown(t *testing.T) {
 	assertHistory()
 	p, closeDB := aiMigrationProvider(t, dsn)
 	defer closeDB()
+	// No menu jobs: first remove 11, then prove the original 10 -> 9 refusal.
+	if _, err = p.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before = capture()
 	if _, err = p.Down(ctx); err == nil || err.Error() == "" {
 		t.Fatal("suppressed history did not reject Down", err)
 	}
@@ -266,6 +273,9 @@ func TestOutboxAIDown(t *testing.T) {
 			}
 			p, closeDB := aiMigrationProvider(t, dsn)
 			defer closeDB()
+			if _, err = p.Down(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			_, err = p.Down(t.Context())
 			if ai && err == nil {
 				t.Fatal("AI history was erased by Down")

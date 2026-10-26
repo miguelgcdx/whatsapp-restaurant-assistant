@@ -64,6 +64,7 @@ func TestCartMigrationUpgradesPopulatedV4WithoutSeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer legacy.Close()
+	finishLegacyFormat := pre11LegacyJobFormat(t, dsn)
 	event := foundation.Event{ID: "pre-cart-event", Sender: "fictional-pre-cart", Text: "unchanged"}
 	now := time.Now().UTC()
 	if fresh, err := legacy.Accept(ctx, event, now); err != nil || !fresh {
@@ -76,6 +77,7 @@ func TestCartMigrationUpgradesPopulatedV4WithoutSeeds(t *testing.T) {
 	if err = legacy.CompleteJob(ctx, job, "fictional acknowledgement", now); err != nil {
 		t.Fatal(err)
 	}
+	finishLegacyFormat()
 	freezePre10AcceptedDelivery(t, dsn, event.ID, "fictional-provider-result", now)
 	beforeEvent, err := legacy.Inspect(ctx, event.ID)
 	if err != nil {

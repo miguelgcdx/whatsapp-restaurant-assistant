@@ -9,6 +9,25 @@ import (
 	"restaurant-assistant/backend/internal/postgres"
 )
 
+// pre11LegacyJobFormat supplies only the discriminator required by today's
+// public legacy queries/whole-claim guard while constructing historical data.
+// A CHECK makes menu rows impossible; no authority checks are bypassed. Remove
+// it BEFORE the historical schema/row baseline and real migration execution.
+// This is fixture compatibility, never a production old-schema fallback.
+func pre11LegacyJobFormat(t *testing.T, dsn string) func() {
+	t.Helper()
+	c := claimConn(t, dsn)
+	if _, err := c.Exec(t.Context(), `ALTER TABLE app.jobs ADD COLUMN route text NOT NULL DEFAULT 'legacy_ack' CHECK (route='legacy_ack')`); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		t.Helper()
+		if _, err := c.Exec(t.Context(), `ALTER TABLE app.jobs DROP COLUMN route`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // freezePre10AcceptedDelivery records the historical migration-1 delivery
 // format, not a runtime compatibility path. Accept/ClaimJob/CompleteJob have
 // already created the genuine pending intent through their public interfaces.
@@ -48,12 +67,15 @@ VALUES($1,1,1,$2,$2,'accepted',$3)`, id, now, providerID); err != nil {
 	}
 }
 
-// Only migration 10's six intentionally additive outbox keys are excluded.
+// Only migrations 10/11's six additive outbox/job keys are excluded.
 // JSONB subtraction is safe on both schemas, keeps every old key/value, and
 // does not normalize business string bytes. All other tables retain their
 // original row_to_json projection, counts, and deterministic full-row ordering.
 func legacyMigrationFingerprintSQL(table string) string {
 	row := "row_to_json(r)::text"
+	if table == "jobs" {
+		row = `(to_jsonb(r) - ARRAY['route','restaurant_id','conversation_id','admission_mode','admission_version','no_reply_reason'])::text`
+	}
 	if table == "outbox" {
 		row = `(to_jsonb(r) - ARRAY['kind','restaurant_id','conversation_id','control_version','creation_generation','creation_attempt'])::text`
 	}
@@ -71,6 +93,14 @@ EXISTS(SELECT 1 FROM app.goose_db_version WHERE version_id=10 AND is_applied)
 FROM app.outbox`).Scan(&count, &legacy, &applied)
 	if err != nil || count == 0 || !legacy || !applied {
 		t.Fatalf("legacy metadata: count=%d allLegacyUntyped=%v v10Applied=%v err=%v", count, legacy, applied, err)
+	}
+	err = conn.QueryRow(t.Context(), `SELECT count(*),
+COALESCE(bool_and(route='legacy_ack' AND restaurant_id IS NULL AND conversation_id IS NULL
+AND admission_mode IS NULL AND admission_version IS NULL AND no_reply_reason IS NULL),false),
+EXISTS(SELECT 1 FROM app.goose_db_version WHERE version_id=11 AND is_applied)
+FROM app.jobs`).Scan(&count, &legacy, &applied)
+	if err != nil || count == 0 || !legacy || !applied {
+		t.Fatalf("legacy job metadata: count=%d allLegacyUntyped=%v v11Applied=%v err=%v", count, legacy, applied, err)
 	}
 }
 

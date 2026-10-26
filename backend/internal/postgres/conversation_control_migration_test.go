@@ -107,6 +107,7 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer jobs.Close()
+	finishLegacyFormat := pre11LegacyJobFormat(t, dsn)
 	now := time.Now()
 	event := foundation.Event{ID: "before-control", Sender: "sender", Text: "opaque"}
 	if _, err := jobs.Accept(ctx, event, now); err != nil {
@@ -144,6 +145,7 @@ func TestConversationControlMigrationPopulatedV8AndConstraints(t *testing.T) {
 	if err := jobs.CompleteJob(ctx, job, "exact preexisting reply", now); err != nil {
 		t.Fatal(err)
 	}
+	finishLegacyFormat()
 	beforeEvent, err := jobs.Inspect(ctx, event.ID)
 	if err != nil {
 		t.Fatal(err)

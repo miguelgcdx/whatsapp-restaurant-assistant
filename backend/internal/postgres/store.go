@@ -96,6 +96,10 @@ func (s *Store) Accept(ctx context.Context, e foundation.Event, now time.Time) (
 		}
 		if n == 0 {
 			stored, err := q.GetEventDigest(ctx, e.ID)
+			// An existing non-legacy identity is a route conflict, not replay.
+			if errors.Is(err, pgx.ErrNoRows) {
+				return foundation.ErrConflict
+			}
 			if err != nil {
 				return err
 			}

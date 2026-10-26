@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 // source: queries.sql
-// Migration 10 legacy isolation maintained by hand; sqlc was not run.
+// Migration 10/11 legacy isolation maintained by hand; sqlc was not run.
 
 package db
 
@@ -56,7 +56,7 @@ func (q *Queries) ClaimDelivery(ctx context.Context, arg ClaimDeliveryParams) (C
 const claimJob = `-- name: ClaimJob :one
 WITH picked AS (
  SELECT q.id FROM app.jobs q JOIN app.inbound_events i ON i.id=q.event_id
- WHERE ((q.state='queued' AND q.due_at <= $2) OR (q.state='leased' AND q.lease_until <= $2))
+ WHERE q.route='legacy_ack' AND ((q.state='queued' AND q.due_at <= $2) OR (q.state='leased' AND q.lease_until <= $2))
  AND NOT EXISTS (
   SELECT 1 FROM app.jobs previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('queued','leased')
@@ -174,7 +174,8 @@ func (q *Queries) FinishSendAttempt(ctx context.Context, arg FinishSendAttemptPa
 }
 
 const getEventDigest = `-- name: GetEventDigest :one
-SELECT digest FROM app.inbound_events WHERE provider_event_id = $1
+SELECT e.digest FROM app.inbound_events e JOIN app.jobs j ON j.event_id=e.id
+WHERE e.provider_event_id = $1 AND j.route='legacy_ack'
 `
 
 func (q *Queries) GetEventDigest(ctx context.Context, providerEventID string) ([]byte, error) {
@@ -313,11 +314,11 @@ func (q *Queries) InspectEvent(ctx context.Context, providerEventID string) (Ins
 const nextDue = `-- name: NextDue :one
 SELECT min(at)::timestamptz AS due_at FROM (
  SELECT j.due_at AS at FROM app.jobs j JOIN app.inbound_events i ON i.id=j.event_id
- WHERE j.state='queued' AND NOT EXISTS (
+ WHERE j.route='legacy_ack' AND j.state='queued' AND NOT EXISTS (
   SELECT 1 FROM app.jobs previous JOIN app.inbound_events pe ON pe.id=previous.event_id
   WHERE pe.sender=i.sender AND pe.sequence<i.sequence AND previous.state IN ('queued','leased')
  )
- UNION ALL SELECT lease_until FROM app.jobs WHERE state='leased'
+ UNION ALL SELECT lease_until FROM app.jobs WHERE route='legacy_ack' AND state='leased'
  UNION ALL
  SELECT o.due_at FROM app.outbox o JOIN app.inbound_events i ON i.id=o.event_id
  WHERE o.kind='legacy_ack' AND o.state='pending' AND NOT EXISTS (
@@ -391,7 +392,7 @@ func (q *Queries) SetDeliveryState(ctx context.Context, arg SetDeliveryStatePara
 
 const setJobState = `-- name: SetJobState :execrows
 UPDATE app.jobs SET state=$1::text, due_at=$2, lease_until=NULL
-WHERE id=$3 AND generation=$4 AND state='leased' AND lease_until > $5
+WHERE route='legacy_ack' AND id=$3 AND generation=$4 AND state='leased' AND lease_until > $5
 `
 
 type SetJobStateParams struct {

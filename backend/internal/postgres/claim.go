@@ -13,7 +13,7 @@ import (
 // ErrClaimUnavailable deliberately contains no driver or connection details.
 var ErrClaimUnavailable = errors.New("claim verification temporarily unavailable")
 
-// LockExecutionJob verifies the full persisted execution claim and retains job
+// LockExecutionJob verifies only legacy-route full execution claims and retains job
 // and event locks in tx. The returned clock check is usable only while that
 // transaction remains open and owns those locks. Call it after any blocking
 // statements and immediately before releasing an outcome or committing.
@@ -36,7 +36,7 @@ func LockExecutionJob(ctx context.Context, tx pgx.Tx, eventUUID, sender string, 
 	var generation int64
 	var attempt int32
 	var deadline pgtype.Timestamptz
-	err = tx.QueryRow(ctx, `SELECT j.id::text,j.event_id::text,j.state,j.generation,j.attempt,j.lease_until,e.provider_event_id,e.sender,e.content FROM app.jobs j JOIN app.inbound_events e ON e.id=j.event_id WHERE j.id=$1 FOR UPDATE OF j FOR SHARE OF e`, job.ID).Scan(&id, &eid, &state, &generation, &attempt, &deadline, &provider, &storedSender, &content)
+	err = tx.QueryRow(ctx, `SELECT j.id::text,j.event_id::text,j.state,j.generation,j.attempt,j.lease_until,e.provider_event_id,e.sender,e.content FROM app.jobs j JOIN app.inbound_events e ON e.id=j.event_id WHERE j.id=$1 AND j.route='legacy_ack' FOR UPDATE OF j FOR SHARE OF e`, job.ID).Scan(&id, &eid, &state, &generation, &attempt, &deadline, &provider, &storedSender, &content)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, foundation.ErrStaleLease
 	}
