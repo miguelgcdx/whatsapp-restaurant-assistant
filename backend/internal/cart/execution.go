@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"restaurant-assistant/backend/internal/foundation"
+	"restaurant-assistant/backend/internal/postgres"
 )
 
 // Call is a closed native descriptor. Parameters contain no actor, source,
@@ -70,37 +70,11 @@ func (s *Store) RegisterExecution(ctx context.Context, local LocalContext, event
 		return Execution{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var eid, sender string
-	if err = tx.QueryRow(ctx, `SELECT id::text,sender FROM app.inbound_events WHERE provider_event_id=$1 FOR SHARE`, event).Scan(&eid, &sender); err != nil {
-		return Execution{}, unavailable(err)
-	}
-	var restaurant, conversation string
-	loadSource := func() error {
-		return tx.QueryRow(ctx, `SELECT restaurant_id::text,conversation_id::text FROM app.cart_execution_sources WHERE event_id=$1 FOR UPDATE`, eid).Scan(&restaurant, &conversation)
-	}
-	err = loadSource()
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Validate sender before creating ANY setup state. Existing bindings
-		// are checked first so every attempted context rebind is a conflict.
-		if sender != local.sender {
-			return Execution{}, ErrNotFound
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO app.cart_execution_sources(event_id,restaurant_id,conversation_id,created_at) VALUES($1,$2,$3,$4) ON CONFLICT(event_id) DO NOTHING`, eid, s.restaurant, local.conversation.value, time.Now().UTC())
-		if err != nil {
-			return Execution{}, ErrUnavailable
-		}
-		// Another context may have registered the event while INSERT waited.
-		err = loadSource()
-	}
+	source, err := s.bindSourceTx(ctx, tx, local, event)
 	if err != nil {
-		return Execution{}, unavailable(err)
+		return Execution{}, err
 	}
-	if restaurant != s.restaurant || conversation != local.conversation.value {
-		return Execution{}, ErrConflict
-	}
-	if sender != local.sender {
-		return Execution{}, ErrNotFound
-	}
+	eid := source.eventUUID
 	// The whole-event source lock serializes registration, so allocate an
 	// operation UUID only for a genuinely new slot, never for retry/reclaim.
 	hash := sha256.Sum256(body)
@@ -288,33 +262,16 @@ func (s *Store) loadExecution(ctx context.Context, tx pgx.Tx, local LocalContext
 }
 
 func lockExecutionJob(ctx context.Context, tx pgx.Tx, event, sender string, job foundation.Job) (authorityGuard, error) {
-	if !validID(job.ID) || job.Generation <= 0 || job.Attempt <= 0 {
-		return nil, foundation.ErrStaleLease
-	}
-	var id, eid, state, provider, storedSender, content string
-	var generation int64
-	var attempt int32
-	var deadline pgtype.Timestamptz
-	err := tx.QueryRow(ctx, `SELECT j.id::text,j.event_id::text,j.state,j.generation,j.attempt,j.lease_until,e.provider_event_id,e.sender,e.content FROM app.jobs j JOIN app.inbound_events e ON e.id=j.event_id WHERE j.id=$1 FOR UPDATE OF j FOR SHARE OF e`, job.ID).Scan(&id, &eid, &state, &generation, &attempt, &deadline, &provider, &storedSender, &content)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, foundation.ErrStaleLease
-	}
+	guard, err := postgres.LockExecutionJob(ctx, tx, event, sender, job)
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, cartClaimError(err)
 	}
-	if id != job.ID || eid != event || state != "leased" || generation != job.Generation || attempt != job.Attempt || provider != job.Event.ID || storedSender != sender || storedSender != job.Event.Sender || content != job.Event.Text || !deadline.Valid || deadline.InfinityModifier != pgtype.Finite {
-		return nil, foundation.ErrStaleLease
+	return func() error { return cartClaimError(guard()) }, nil
+}
+
+func cartClaimError(err error) error {
+	if errors.Is(err, postgres.ErrClaimUnavailable) {
+		return ErrUnavailable
 	}
-	return func() error {
-		// Separate statement AFTER blocking locks/statements. Transaction-start now()
-		// and SELECT expressions evaluated before LockRows are not authority clocks.
-		var now time.Time
-		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-			return ErrUnavailable
-		}
-		if !deadline.Time.After(now) {
-			return foundation.ErrStaleLease
-		}
-		return nil
-	}, nil
+	return err
 }
