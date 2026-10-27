@@ -85,8 +85,8 @@ is not parent full-suite/independent approval; see the guide's evidence limits.
 The [LOCAL menu-message route](docs/local-menu-runtime.md) adds migration11
 provenance, legacy consumer fencing and native atomic `AcceptMenu`/`ReadAdmission`.
 Admission requires existing owned LOCAL setup and authenticated control; historical
-receipts never grant current AI permission. Scoped execution, epoch-aware gate
-integration and a runnable menu host are still pending.
+receipts never grant current AI permission. Native scoped claims and guarded
+no-reply retirement are available; gate integration and a runnable host remain pending.
 
 ## Verify the complete local loop
 

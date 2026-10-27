@@ -77,11 +77,13 @@ func menuSeed(t *testing.T, f fixture, jobs *postgres.Store, state conversation.
 
 func menuCounters(t *testing.T, f fixture) string {
 	t.Helper()
+	conn := sourceConn(t, f)
+	defer conn.Close(context.Background())
 	var counters string
-	if err := sourceConn(t, f).QueryRow(t.Context(), `SELECT json_build_array((SELECT count(*) FROM app.inbound_events),(SELECT count(*) FROM app.conversation_controls),(SELECT count(*) FROM app.conversation_control_operations),(SELECT COALESCE(json_agg(q ORDER BY sender)::text,'[]') FROM app.conversation_sequences q))::text`).Scan(&counters); err != nil {
+	if err := conn.QueryRow(t.Context(), `SELECT json_build_array((SELECT count(*) FROM app.inbound_events),(SELECT count(*) FROM app.conversation_controls),(SELECT count(*) FROM app.conversation_control_operations),(SELECT COALESCE(json_agg(q ORDER BY sender)::text,'[]') FROM app.conversation_sequences q))::text`).Scan(&counters); err != nil {
 		t.Fatal(err)
 	}
-	return sourceCounts(t, sourceConn(t, f)) + counters
+	return sourceCounts(t, conn) + counters
 }
 
 func menuPublicUnchanged(t *testing.T, f fixture, jobs *postgres.Store, event foundation.Event, before foundation.Snapshot, counters string) {

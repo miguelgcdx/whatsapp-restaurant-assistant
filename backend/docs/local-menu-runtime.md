@@ -2,8 +2,8 @@
 
 Migration11 and native admission are **prerequisites**, not a runnable menu pipeline.
 `cart.Store.AcceptMenu` admits pinned LOCAL events; `ReadAdmission` resolves their
-historical receipts. Menu claims, epoch-aware gate integration and the runtime host
-remain pending. The existing synthetic API/worker still produces legacy ACKs.
+historical receipts. Native scoped claims and guarded no-reply retirement are
+available; gate integration and the runtime host remain pending. Legacy ACKs remain unchanged.
 No new command is available; the native legacy menu-gate callers remain supported.
 
 ## Persisted format
@@ -54,11 +54,32 @@ lock; a missing matching durable effect returns `ErrStoredData`, not a completed
 reply receipt. Its original epoch/effect remains historical after control changes,
 not current model authority; an absent `ReadQueued` probe is never replay permission. No model/provider I/O or claim is performed here.
 
+## Native claim and no-reply lifecycle
+
+`ClaimMenu(ctx, local, lease)` issues an opaque scoped claim, not model permission.
+It preserves the original admission epoch, source/event and history; global sender
+predecessors still order work. Only expired leases can be reclaimed on reopen.
+`LockMenuExecutionJob` revalidates the full persisted menu/source/event/job tuple
+under ownership/source/job locks. Its transaction-scoped closure checks a fresh
+DB clock after blocking statements; call it immediately before releasing outcomes.
+After transaction closure it fails unavailable. Current control is deliberately
+not model-checked here, so changed authority can still retire old admitted work.
+`FinishMenuWithoutReply(ctx, local, claim)` locks existing ownership/source/control
+and the exact job. Same current AI epoch returns false,nil without mutation;
+changed mode/version commits only completed/control_changed and clears the lease.
+No reply/effect is allocated; event/source/epoch/generation/attempt/history remain.
+Zero, expired, reclaimed, mismatched or completed claims are stale, not replay.
+Malformed inputs fail; missing control fails closed and never bootstraps authority.
+Before commit, cancellation/deadline and post-wait expiry reject the transition.
+True means a known commit; commit errors may be uncertain, never rollback promises.
+Use locked `ReadAdmission` to resolve durable history; never infer model permission.
+No model/provider I/O or automatic worker routing is added by these native APIs.
+
 ## Dependent work still pending
 
-Scoped lifecycle, gate epoch checks and the fixture host follow in that order. The selected return-to-AI policy is **only new messages**: keep older inbound
+Gate epoch checks and the fixture host remain pending. The selected return-to-AI policy is **only new messages**: keep older inbound
 history, but never make it newly eligible for delayed AI conversational replies
 just because staff returns control, including replay/restart. This policy is not
-fully implemented until the epoch-aware lifecycle and gate are connected. Staff messaging and order-status
+fully implemented until the native lifecycle and epoch-aware gate are connected. Staff messaging and order-status
 notifications are not governed by that AI-reply policy. No live model/provider,
 production delivery, independent verification or complete runtime proof is claimed.
