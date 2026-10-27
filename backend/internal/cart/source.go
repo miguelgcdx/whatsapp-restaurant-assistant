@@ -10,7 +10,7 @@ import (
 
 // Source is immutable local fixture metadata, NOT a claim, authentication
 // credential, or permission to invoke a model. Its zero value is invalid.
-// BindSource is the only public way to obtain a populated value.
+// BindSource and AcceptMenu return populated values under stored ownership.
 type Source struct {
 	restaurant      string
 	conversation    ConversationID

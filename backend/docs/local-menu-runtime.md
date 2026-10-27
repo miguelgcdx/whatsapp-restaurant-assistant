@@ -1,8 +1,9 @@
 # Reserved LOCAL menu-message route
 
-Migration 11 is a **prerequisite**, not a runnable menu conversation pipeline.
-There is no menu admission producer, menu claim API, epoch-aware gate integration
-or runtime host yet. The existing synthetic API/worker still produces legacy ACKs.
+Migration11 and native admission are **prerequisites**, not a runnable menu pipeline.
+`cart.Store.AcceptMenu` admits pinned LOCAL events; `ReadAdmission` resolves their
+historical receipts. Menu claims, epoch-aware gate integration and the runtime host
+remain pending. The existing synthetic API/worker still produces legacy ACKs.
 No new command is available; the native legacy menu-gate callers remain supported.
 
 ## Persisted format
@@ -17,7 +18,7 @@ No new command is available; the native legacy menu-gate callers remain supporte
 Menu attempt/generation counters are either both zero or both positive. Unknown
 routes, incomplete scope, illegal mode/reason/state combinations and mismatched
 source bindings are rejected by the schema. These fields do not themselves grant
-AI permission: future admission must lock real staff-initialized control authority.
+AI permission: admission locks real staff-initialized control authority.
 LOCAL fixture binding is not verified provider/customer identity.
 
 ## Isolation and rollback
@@ -34,12 +35,30 @@ with no outbox. It never deletes or reclassifies admissions. A legacy-only Down
 restores the v10 schema while preserving existing rows; route-aware current code
 requires migration 11 and must not be run against the downgraded schema.
 
+## Native admission
+
+Require an owned migrated database, catalog/settings, current staff membership,
+explicit `ProvisionLocal`/`LoadLocal` scope and actual staff-authenticated
+`conversation.Store.Initialize`; startup/intake never initializes AI permission.
+Pass operator-owned scope, matching sender, exact foundation.Event and service time
+into `AcceptMenu(ctx, local, event, now)`. Staff admits completed/no-reply work with
+zero attempts and no outbox; AI admits queued work pinned to the locked mode/version.
+The returned boolean is true only after a known successful new commit, never replay
+or error. Commit errors may mean an unknown outcome, not guaranteed rollback.
+Exact duplicates retain original source/job/epoch/disposition across reopen, takeover,
+return and same-mode changes without consuming another sequence. Route/scope/digest
+conflicts fail closed. `ReadAdmission(ctx, local, eventID)` locks ownership, source,
+control and job before observing durable state, waiting for earlier transactions.
+Completed AI reply history resolves its original exact `OutboxID`/`Reply` under
+lock; a missing matching durable effect returns `ErrStoredData`, not a completed
+reply receipt. Its original epoch/effect remains historical after control changes,
+not current model authority; an absent `ReadQueued` probe is never replay permission. No model/provider I/O or claim is performed here.
+
 ## Dependent work still pending
 
-Admission, scoped lifecycle, gate epoch checks and the fixture host follow in that
-order. The selected return-to-AI policy is **only new messages**: keep older inbound
+Scoped lifecycle, gate epoch checks and the fixture host follow in that order. The selected return-to-AI policy is **only new messages**: keep older inbound
 history, but never make it newly eligible for delayed AI conversational replies
 just because staff returns control, including replay/restart. This policy is not
-implemented by reserving a route alone. Staff messaging and order-status
+fully implemented until the epoch-aware lifecycle and gate are connected. Staff messaging and order-status
 notifications are not governed by that AI-reply policy. No live model/provider,
 production delivery, independent verification or complete runtime proof is claimed.

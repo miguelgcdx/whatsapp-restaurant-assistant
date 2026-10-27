@@ -82,9 +82,11 @@ it does **not** route the default worker through AI or add live-provider/UI/orde
 integration. Unknown sends are never automatically retried. Focused D2 evidence
 is not parent full-suite/independent approval; see the guide's evidence limits.
 
-The [reserved LOCAL menu-message route](docs/local-menu-runtime.md) adds migration
-11 provenance and legacy consumer fencing only. Admission, scoped execution,
-epoch-aware gate integration and a runnable menu host are still pending.
+The [LOCAL menu-message route](docs/local-menu-runtime.md) adds migration11
+provenance, legacy consumer fencing and native atomic `AcceptMenu`/`ReadAdmission`.
+Admission requires existing owned LOCAL setup and authenticated control; historical
+receipts never grant current AI permission. Scoped execution, epoch-aware gate
+integration and a runnable menu host are still pending.
 
 ## Verify the complete local loop
 

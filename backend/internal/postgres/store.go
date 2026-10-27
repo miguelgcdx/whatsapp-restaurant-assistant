@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -71,30 +69,17 @@ func (s *Store) Accept(ctx context.Context, e foundation.Event, now time.Time) (
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	encoded, err := json.Marshal(e)
-	if err != nil {
-		return false, err
-	}
-	digest := sha256.Sum256(encoded)
-	eventID, err := newID()
-	if err != nil {
-		return false, err
-	}
-	jobID, err := newID()
+	allocation, err := PrepareEventIntake(e)
 	if err != nil {
 		return false, err
 	}
 	created := false
 	err = s.transact(ctx, func(q *db.Queries) error {
-		sequence, err := q.NextSequence(ctx, e.Sender)
+		inserted, err := allocation.Allocate(ctx, q, now)
 		if err != nil {
 			return err
 		}
-		n, err := q.InsertEvent(ctx, db.InsertEventParams{ID: eventID, ProviderEventID: e.ID, Sender: e.Sender, Sequence: sequence, Content: e.Text, Digest: digest[:], CreatedAt: stamp(now)})
-		if err != nil {
-			return err
-		}
-		if n == 0 {
+		if !inserted {
 			stored, err := q.GetEventDigest(ctx, e.ID)
 			// An existing non-legacy identity is a route conflict, not replay.
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -103,12 +88,12 @@ func (s *Store) Accept(ctx context.Context, e foundation.Event, now time.Time) (
 			if err != nil {
 				return err
 			}
-			if !bytes.Equal(stored, digest[:]) {
+			if !bytes.Equal(stored, allocation.Digest[:]) {
 				return foundation.ErrConflict
 			}
 			return errReplay
 		}
-		if err := q.InsertJob(ctx, db.InsertJobParams{ID: jobID, EventID: eventID, DueAt: stamp(now)}); err != nil {
+		if err := q.InsertJob(ctx, db.InsertJobParams{ID: allocation.JobID, EventID: allocation.EventID, DueAt: stamp(now)}); err != nil {
 			return err
 		}
 		created = true
