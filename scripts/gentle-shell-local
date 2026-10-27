@@ -1,0 +1,23 @@
+#!/bin/bash
+# Start a new Gentle Shell process with repository-local temporary storage.
+set -eu
+
+fail() { printf 'gentle-shell-local: %s\n' "$1" >&2; exit 1; }
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
+ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel 2>/dev/null)" ||
+  fail 'cannot resolve repository root'
+ROOT="$(cd -- "$ROOT" && pwd -P)" || exit 1
+
+# Check every component below the canonical root, not just the final directory.
+BASE="$ROOT/backend/.cache/tmp"
+for path in "$ROOT/backend" "$ROOT/backend/.cache" "$BASE"; do
+  [[ -d $path && ! -L $path && -O $path ]] || fail 'unsafe temporary-storage path'
+done
+[[ $(stat -c %a -- "$BASE") == 700 ]] || fail 'unsafe temporary-storage path'
+LAUNCHER="$(type -P gentle-shell)" || fail 'gentle-shell executable not found in PATH'
+RUN_TMP="$(mktemp -d "$BASE/launcher-prerequisite-XXXXXX")" ||
+  fail 'cannot create private launch directory'
+[[ -d $RUN_TMP && ! -L $RUN_TMP && -O $RUN_TMP ]] || fail 'unsafe temporary-storage path'
+export TMPDIR="$RUN_TMP"
+# Retain launch evidence. Do not remove old data or retry prior verification.
+exec "$LAUNCHER" "$@"
