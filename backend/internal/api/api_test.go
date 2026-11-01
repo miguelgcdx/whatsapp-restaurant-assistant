@@ -17,6 +17,7 @@ import (
 	"restaurant-assistant/backend/internal/foundation"
 	"restaurant-assistant/backend/internal/postgres"
 	"restaurant-assistant/backend/internal/testpg"
+	"restaurant-assistant/backend/internal/testsocket"
 )
 
 var secret = []byte(strings.Repeat("s", 32))
@@ -171,7 +172,7 @@ func TestUnavailableAndConfiguration(t *testing.T) {
 }
 
 func TestNotify(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wake.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(t.TempDir(), "wake.sock"))
 	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
 		t.Fatal(err)

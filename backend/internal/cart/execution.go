@@ -13,13 +13,17 @@ import (
 	"restaurant-assistant/backend/internal/postgres"
 )
 
-// Call is a closed native descriptor. Parameters contain no actor, source,
-// runtime slot, claim, or operation nonce. Its zero value is invalid.
+// Call is a closed native descriptor. Parameters select no actor/source scope,
+// runtime slot, claim, or operation nonce. Its zero value is invalid; stored
+// assessment references alone are not authority.
 type Call struct {
-	req     request
-	action  Action
-	draft   *draftRequest
-	preview *summaryPreviewRequest
+	req        request
+	action     Action
+	draft      *draftRequest
+	preview    *summaryPreviewRequest
+	pickup     *pickupRequest
+	unresolved *unresolvedEditRequest
+	resolution *resolutionBinding
 }
 
 func CreateCall() Call { return Call{req: request{Action: "create", Targets: []string{}}} }
@@ -74,13 +78,26 @@ func (s *Store) RegisterExecution(ctx context.Context, local LocalContext, event
 	if err != nil {
 		return Execution{}, err
 	}
+	execution, err := s.registerExecutionTx(ctx, tx, local, source, slot, call, body)
+	if err != nil {
+		return Execution{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Execution{}, ErrUnavailable
+	}
+	return execution, nil
+}
+
+// registerExecutionTx requires the ownership/source lock prefix and a validated
+// canonical body. The caller owns commit and rollback, including native admission.
+func (s *Store) registerExecutionTx(ctx context.Context, tx pgx.Tx, local LocalContext, source Source, slot int64, call Call, body []byte) (Execution, error) {
 	eid := source.eventUUID
 	// The whole-event source lock serializes registration, so allocate an
 	// operation UUID only for a genuinely new slot, never for retry/reclaim.
 	hash := sha256.Sum256(body)
 	var storedBody, storedAction, storedOp string
 	var storedHash []byte
-	err = tx.QueryRow(ctx, `SELECT action,canonical_intent,fingerprint,operation_id::text FROM app.cart_execution_calls WHERE event_id=$1 AND runtime_slot=$2 FOR UPDATE`, eid, slot).Scan(&storedAction, &storedBody, &storedHash, &storedOp)
+	err := tx.QueryRow(ctx, `SELECT action,canonical_intent,fingerprint,operation_id::text FROM app.cart_execution_calls WHERE event_id=$1 AND runtime_slot=$2 FOR UPDATE`, eid, slot).Scan(&storedAction, &storedBody, &storedHash, &storedOp)
 	var op OperationID
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -103,9 +120,6 @@ func (s *Store) RegisterExecution(ctx context.Context, local LocalContext, event
 			return Execution{}, ErrStoredData
 		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return Execution{}, ErrUnavailable
-	}
 	return Execution{eid, slot, op}, nil
 }
 
@@ -117,10 +131,17 @@ func decodeCall(body string) (Call, error) {
 		return Call{}, ErrStoredData
 	}
 	var kind struct {
-		Action string `json:"action"`
+		Action     string          `json:"action"`
+		Resolution json.RawMessage `json:"resolution"`
 	}
 	if json.Unmarshal([]byte(body), &kind) != nil {
 		return Call{}, ErrStoredData
+	}
+	if kind.Action == unresolvedEditAction || kind.Resolution != nil {
+		return decodeAmbiguousEditCall(body, kind.Action == unresolvedEditAction)
+	}
+	if kind.Action == pickupPrepareAction || kind.Action == pickupSubmitAction {
+		return decodePickupCall(body)
 	}
 	if kind.Action == "capture_preview" || kind.Action == "read_preview" {
 		return decodeSummaryPreviewCall(body)
@@ -204,7 +225,7 @@ func (s *Store) Execute(ctx context.Context, local LocalContext, execution Execu
 	if err != nil {
 		return Result{}, err
 	}
-	if call.draft != nil || call.preview != nil {
+	if call.draft != nil || call.preview != nil || call.pickup != nil {
 		return Result{}, ErrInput
 	}
 	switch call.req.Action {
@@ -224,31 +245,12 @@ func (s *Store) Execute(ctx context.Context, local LocalContext, execution Execu
 	}
 }
 
-// loadExecution is shared by all result seams: canonical plan and actual job
-// authority are always loaded under the same locks in the cart transaction.
+// loadExecution retains legacy-route authority for the existing result seams.
+// Canonical plan and actual job authority share one cart transaction and lock order.
 func (s *Store) loadExecution(ctx context.Context, tx pgx.Tx, local LocalContext, execution Execution, job foundation.Job) (Call, authorityGuard, error) {
-	var restaurant, conversation string
-	if err := tx.QueryRow(ctx, `SELECT restaurant_id::text,conversation_id::text FROM app.cart_execution_sources WHERE event_id=$1 FOR UPDATE`, execution.event).Scan(&restaurant, &conversation); err != nil {
-		return Call{}, nil, unavailable(err)
-	}
-	if restaurant != s.restaurant || conversation != local.conversation.value {
-		return Call{}, nil, ErrNotFound
-	}
-	var body, action, op string
-	var hash []byte
-	if err := tx.QueryRow(ctx, `SELECT action,canonical_intent,fingerprint,operation_id::text FROM app.cart_execution_calls WHERE event_id=$1 AND runtime_slot=$2 AND restaurant_id=$3 AND conversation_id=$4 FOR UPDATE`, execution.event, execution.slot, s.restaurant, local.conversation.value).Scan(&action, &body, &hash, &op); err != nil {
-		return Call{}, nil, unavailable(err)
-	}
-	if op != execution.operation.value {
-		return Call{}, nil, ErrNotFound
-	}
-	call, err := decodeCall(body)
+	call, err := s.loadRegisteredExecution(ctx, tx, local, execution)
 	if err != nil {
 		return Call{}, nil, err
-	}
-	expected := sha256.Sum256([]byte(body))
-	if action != call.req.Action || !bytes.Equal(hash, expected[:]) {
-		return Call{}, nil, ErrStoredData
 	}
 	guard, err := lockExecutionJob(ctx, tx, execution.event, local.sender, job)
 	if err != nil {
@@ -259,6 +261,37 @@ func (s *Store) loadExecution(ctx context.Context, tx pgx.Tx, local LocalContext
 		return Call{}, nil, err
 	}
 	return call, guard, nil
+}
+
+// loadRegisteredExecution locks and validates the persisted source/call binding.
+// It does NOT authorize execution or release of cached output. Callers must hold
+// the ownership lock prefix, verify the applicable route-specific claim and
+// control in this transaction, and recheck authority after blocking statements.
+func (s *Store) loadRegisteredExecution(ctx context.Context, tx pgx.Tx, local LocalContext, execution Execution) (Call, error) {
+	var restaurant, conversation string
+	if err := tx.QueryRow(ctx, `SELECT restaurant_id::text,conversation_id::text FROM app.cart_execution_sources WHERE event_id=$1 FOR UPDATE`, execution.event).Scan(&restaurant, &conversation); err != nil {
+		return Call{}, unavailable(err)
+	}
+	if restaurant != s.restaurant || conversation != local.conversation.value {
+		return Call{}, ErrNotFound
+	}
+	var body, action, op string
+	var hash []byte
+	if err := tx.QueryRow(ctx, `SELECT action,canonical_intent,fingerprint,operation_id::text FROM app.cart_execution_calls WHERE event_id=$1 AND runtime_slot=$2 AND restaurant_id=$3 AND conversation_id=$4 FOR UPDATE`, execution.event, execution.slot, s.restaurant, local.conversation.value).Scan(&action, &body, &hash, &op); err != nil {
+		return Call{}, unavailable(err)
+	}
+	if op != execution.operation.value {
+		return Call{}, ErrNotFound
+	}
+	call, err := decodeCall(body)
+	if err != nil {
+		return Call{}, err
+	}
+	expected := sha256.Sum256([]byte(body))
+	if action != call.req.Action || !bytes.Equal(hash, expected[:]) {
+		return Call{}, ErrStoredData
+	}
+	return call, nil
 }
 
 func lockExecutionJob(ctx context.Context, tx pgx.Tx, event, sender string, job foundation.Job) (authorityGuard, error) {

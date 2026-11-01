@@ -26,8 +26,8 @@ func TestMenuRuntimeFormat(t *testing.T) {
 	if err := c.QueryRow(t.Context(), `SELECT max(version_id) FROM app.goose_db_version WHERE is_applied`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 11 {
-		t.Fatalf("reserved menu format version = %d, want 11", version)
+	if version != 14 {
+		t.Fatalf("latest runtime format version = %d, want 14", version)
 	}
 }
 
@@ -363,6 +363,7 @@ func TestMenuRuntimeMigrationPreservesV10AndDown(t *testing.T) {
 	if _, err := p.UpTo(t.Context(), 10); err != nil {
 		t.Fatal(err)
 	}
+	assertMigrationVersion(t, p, 10)
 	c := claimConn(t, dsn)
 	// Frozen v10 data: explicit non-default old values, exact timestamps and bytes.
 	for _, sql := range []string{
@@ -396,10 +397,35 @@ func TestMenuRuntimeMigrationPreservesV10AndDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, exactBefore := menuRows(t, c, true), menuRows(t, c, false)
+	if _, exists := before["native_cart_actions"]; exists {
+		t.Fatal("v10 unexpectedly contains native_cart_actions")
+	}
+	// Only the known empty tables added after v10 are excluded from this
+	// old-row view. Every old table, field and counter retains exact comparison.
+	latestRows := func() map[string]string {
+		t.Helper()
+		rows := menuRows(t, c, true)
+		if data, exists := rows["native_cart_actions"]; !exists || data != "[]" {
+			t.Fatal("expected only an empty new native_cart_actions table", rows)
+		}
+		delete(rows, "native_cart_actions")
+		if data, exists := rows["unresolved_cart_edits"]; !exists || data != "[]" {
+			t.Fatalf("expected empty new unresolved_cart_edits table: %q", data)
+		}
+		delete(rows, "unresolved_cart_edits")
+		for _, name := range []string{"pickup_candidates", "pickup_candidate_units", "pickup_presentations", "pickup_orders", "pickup_evidence", "pickup_intents", "pickup_staff_operations", "pickup_local_replies"} {
+			if data, exists := rows[name]; !exists || data != "[]" {
+				t.Fatalf("expected empty new pickup table %s: %q", name, data)
+			}
+			delete(rows, name)
+		}
+		return rows
+	}
 	if err := postgres.Migrate(t.Context(), dsn); err != nil {
 		t.Fatal(err)
 	}
-	if after := menuRows(t, c, true); !reflect.DeepEqual(after, before) {
+	assertMigrationVersion(t, p, 14)
+	if after := latestRows(); !reflect.DeepEqual(after, before) {
 		t.Fatal("Up changed old fields/counts", before, after)
 	}
 	var valid bool
@@ -419,17 +445,20 @@ func TestMenuRuntimeMigrationPreservesV10AndDown(t *testing.T) {
 	if fresh, err := store.Accept(t.Context(), event, time.Now()); err != nil || fresh {
 		t.Fatal("preserved replay", fresh, err)
 	}
-	if after := menuRows(t, c, true); !reflect.DeepEqual(after, before) {
+	if after := latestRows(); !reflect.DeepEqual(after, before) {
 		t.Fatal("replay changed historical rows/counters", before, after)
 	}
 	assertCurrentLegacyDelivery(t, store)
-	// The new public history must survive Down too; capture after creating it.
-	oldRows := menuRows(t, c, true)
-	if _, err := p.Down(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if after := menuRows(t, c, true); !reflect.DeepEqual(after, oldRows) {
-		t.Fatal("Down changed rows", oldRows, after)
+	// Prove empty v12 can roll back, then restore the original v10 boundary.
+	oldRows := latestRows()
+	for _, version := range []int64{11, 10} {
+		if _, err := p.DownTo(t.Context(), version); err != nil {
+			t.Fatal(err)
+		}
+		assertMigrationVersion(t, p, version)
+		if after := menuRows(t, c, true); !reflect.DeepEqual(after, oldRows) {
+			t.Fatal("Down changed rows", oldRows, after)
+		}
 	}
 	after := menuRows(t, c, false)
 	if after["schema"] != exactBefore["schema"] || after["goose_db_version"] != exactBefore["goose_db_version"] {
@@ -442,6 +471,12 @@ func TestMenuRuntimeHistoryRefusesDown(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := claimSetup(t)
 			reserveMenuJob(t, f, mode)
+			p, closeDB := aiMigrationProvider(t, f.dsn)
+			defer closeDB()
+			if _, err := p.DownTo(t.Context(), 11); err != nil {
+				t.Fatal(err)
+			}
+			assertMigrationVersion(t, p, 11)
 			before := menuRows(t, f.observer, false)
 			snapshot := menuSnapshot(t, f)
 			if mode == "staff" {
@@ -453,11 +488,10 @@ func TestMenuRuntimeHistoryRefusesDown(t *testing.T) {
 			if snapshot.OutboxCount != 0 {
 				t.Fatal("fixture has outbox", snapshot)
 			}
-			p, closeDB := aiMigrationProvider(t, f.dsn)
-			defer closeDB()
-			if _, err := p.Down(t.Context()); err == nil || !strings.Contains(err.Error(), "Menu admission history prevents migration 11 rollback") {
+			if _, err := p.DownTo(t.Context(), 10); err == nil || !strings.Contains(err.Error(), "Menu admission history prevents migration 11 rollback") {
 				t.Fatal("Down failed to refuse menu history", err)
 			}
+			assertMigrationVersion(t, p, 11)
 			if after := menuRows(t, f.observer, false); !reflect.DeepEqual(after, before) {
 				t.Fatal("refused Down changed data/schema/Goose", before, after)
 			}
@@ -465,5 +499,39 @@ func TestMenuRuntimeHistoryRefusesDown(t *testing.T) {
 				t.Fatal("refused Down changed snapshot", snapshot, after)
 			}
 		})
+	}
+}
+
+func TestMenuRuntimeNativeHistoryRefusesDown(t *testing.T) {
+	f := claimSetup(t)
+	reserveMenuJob(t, f, "ai")
+	// Reuse the reserved job/source scope; the execution call and admission
+	// reference that same event, slot, operation and claimed job.
+	for _, sql := range []string{
+		`INSERT INTO app.cart_execution_calls(event_id,runtime_slot,restaurant_id,conversation_id,action,canonical_intent,fingerprint,operation_id,created_at) SELECT event_id,0,restaurant_id,conversation_id,'create','{"action":"create"}',decode(repeat('00',32),'hex'),'d0000000-0000-4000-8000-000000000001',created_at FROM app.cart_execution_sources`,
+		`INSERT INTO app.native_cart_actions(event_id,runtime_slot,operation_id,restaurant_id,conversation_id,admission_job_id,admission_version,admission_generation,admission_attempt,admitted_at,due_at) SELECT c.event_id,c.runtime_slot,c.operation_id,c.restaurant_id,c.conversation_id,j.id,j.admission_version,j.generation,j.attempt,clock_timestamp(),j.due_at FROM app.cart_execution_calls c JOIN app.jobs j ON j.event_id=c.event_id`,
+	} {
+		if tag, err := f.observer.Exec(t.Context(), sql); err != nil || tag.RowsAffected() != 1 {
+			t.Fatal("native history fixture", tag, err)
+		}
+	}
+	p, closeDB := aiMigrationProvider(t, f.dsn)
+	defer closeDB()
+	assertMigrationVersion(t, p, 14)
+	if _, err := p.DownTo(t.Context(), 12); err != nil {
+		t.Fatal(err)
+	}
+	assertMigrationVersion(t, p, 12)
+	before := menuRows(t, f.observer, false)
+	snapshot := menuSnapshot(t, f)
+	if _, err := p.DownTo(t.Context(), 11); err == nil || !strings.Contains(err.Error(), "Native cart admission history prevents migration 12 rollback") {
+		t.Fatal("Down failed to refuse native history", err)
+	}
+	assertMigrationVersion(t, p, 12)
+	if after := menuRows(t, f.observer, false); !reflect.DeepEqual(after, before) {
+		t.Fatal("refused native Down changed data/counters/schema/Goose", before, after)
+	}
+	if after := menuSnapshot(t, f); after != snapshot {
+		t.Fatal("refused native Down changed snapshot", snapshot, after)
 	}
 }

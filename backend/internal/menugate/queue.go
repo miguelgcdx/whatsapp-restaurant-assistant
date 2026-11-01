@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"restaurant-assistant/backend/internal/cart"
 	"restaurant-assistant/backend/internal/foundation"
-	"restaurant-assistant/backend/internal/postgres"
 	"restaurant-assistant/backend/internal/postgres/db"
 )
 
@@ -66,11 +65,21 @@ func (g *Gate) RunAndQueue(parent context.Context, source cart.Source, job found
 	if (foundation.Event{ID: "outbox", Sender: "fake", Text: proposal.Reply}).Validate() != nil {
 		return out, ErrReply
 	}
+	return g.commitReply(ctx, source, job, version, proposal.Reply, nil)
+}
+
+// commitReply owns the existing guarded transaction for both reply paths. A nil
+// clarification preserves RunAndQueue's already-validated engine reply; otherwise
+// the reply is derived from its actual stored marker under these same locks.
+func (g *Gate) commitReply(ctx context.Context, source cart.Source, job foundation.Job, version int64, reply string, clarification *clarificationBinding) (out Receipt, err error) {
 	phase, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()
 	defer func() {
 		if expired := contextError(phase); expired != nil {
 			err = expired
+		}
+		if err != nil {
+			out = Receipt{}
 		}
 	}()
 	tx, err := g.pool.Begin(phase)
@@ -78,14 +87,14 @@ func (g *Gate) RunAndQueue(parent context.Context, source cart.Source, job found
 		return out, ErrUnavailable
 	}
 	defer cleanup(tx)
-	mode, current, err := lockSource(phase, tx, g.restaurant, scopeOf(source))
+	mode, current, route, err := lockExecutionSource(phase, tx, g.restaurant, source)
 	if err != nil {
 		return out, err
 	}
-	if mode != "ai" || current != version {
+	if !route.permitsAI(mode, current) || current != version {
 		return out, ErrControlChanged
 	}
-	guard, err := postgres.LockExecutionJob(phase, tx, source.EventUUID(), source.Sender(), job)
+	guard, err := route.lockJob(phase, tx, source, job)
 	if err != nil {
 		if errors.Is(err, foundation.ErrStaleLease) {
 			return out, foundation.ErrStaleLease
@@ -94,6 +103,15 @@ func (g *Gate) RunAndQueue(parent context.Context, source cart.Source, job found
 	}
 	if source.EventProviderID() != job.Event.ID {
 		return out, foundation.ErrStaleLease
+	}
+	if clarification != nil {
+		if route.kind != "menu_message" {
+			return out, foundation.ErrStaleLease
+		}
+		reply, err = clarification.reply(phase, tx, source, job, version)
+		if err != nil {
+			return out, err
+		}
 	}
 	id := pgtype.UUID{Valid: true}
 	if _, err = rand.Read(id.Bytes[:]); err != nil {
@@ -108,7 +126,7 @@ func (g *Gate) RunAndQueue(parent context.Context, source cart.Source, job found
 	if err = tx.QueryRow(phase, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return out, ErrUnavailable
 	}
-	if err = q.InsertOutbox(phase, db.InsertOutboxParams{ID: id, JobID: mustUUID(job.ID), Content: proposal.Reply, DueAt: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
+	if err = q.InsertOutbox(phase, db.InsertOutboxParams{ID: id, JobID: mustUUID(job.ID), Content: reply, DueAt: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
 		return out, ErrUnavailable
 	}
 	if _, err = tx.Exec(phase, `UPDATE app.outbox SET kind='ai_reply',restaurant_id=$2,conversation_id=$3,control_version=$4,creation_generation=$5,creation_attempt=$6 WHERE id=$1`, id, g.restaurant, source.ConversationID().String(), version, job.Generation, job.Attempt); err != nil {
@@ -131,7 +149,7 @@ func (g *Gate) RunAndQueue(parent context.Context, source cart.Source, job found
 	if err = tx.Commit(phase); err != nil {
 		return out, ErrUnavailable
 	}
-	return Receipt{OutboxID: id.String(), Content: proposal.Reply, ControlVersion: version, State: "pending"}, nil
+	return Receipt{OutboxID: id.String(), Content: reply, ControlVersion: version, State: "pending"}, nil
 }
 
 // queuePrecheck retains Run's normal lock hierarchy, but the new durable API
@@ -150,11 +168,11 @@ func (g *Gate) queuePrecheck(parent context.Context, source cart.Source, job fou
 		return 0, ErrUnavailable
 	}
 	defer cleanup(tx)
-	mode, version, err := lockSource(ctx, tx, g.restaurant, scopeOf(source))
+	mode, version, route, err := lockExecutionSource(ctx, tx, g.restaurant, source)
 	if err != nil {
 		return 0, err
 	}
-	guard, err := postgres.LockExecutionJob(ctx, tx, source.EventUUID(), source.Sender(), job)
+	guard, err := route.lockJob(ctx, tx, source, job)
 	if err != nil {
 		if errors.Is(err, foundation.ErrStaleLease) {
 			return 0, foundation.ErrStaleLease
@@ -170,7 +188,7 @@ func (g *Gate) queuePrecheck(parent context.Context, source cart.Source, job fou
 		}
 		return 0, ErrUnavailable
 	}
-	if mode != "ai" {
+	if !route.permitsAI(mode, version) {
 		return 0, ErrControlChanged
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -179,7 +197,7 @@ func (g *Gate) queuePrecheck(parent context.Context, source cart.Source, job fou
 	return version, nil
 }
 
-// mustUUID is used only after LockExecutionJob has checked canonical syntax.
+// mustUUID is used only after the route's verifier checked canonical syntax.
 func mustUUID(s string) pgtype.UUID { var id pgtype.UUID; _ = id.Scan(s); return id }
 
 func (g *Gate) ReadQueued(parent context.Context, source cart.Source) (out Receipt, err error) {

@@ -1,5 +1,14 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Project documentation
+
+Start with the [product design map](docs/product/README.md), which links the [architecture overview](docs/ARCHITECTURE.md) and detailed data/API contracts, staff JSON schemas, bounded-read rules and PostgreSQL schema design. These record design decisions and unresolved gates, not implemented behavior.
+
+- [PRD](docs/PRD.md): product purpose and outcomes.
+- [MVP](docs/MVP.md): prototype scope and exclusions.
+- [Requirements](docs/REQUIREMENTS.md): 28 behavior rules and future acceptance examples.
+- [Original brief](docs/PROJECT_BRIEF.md): immutable blueprint, not automatically approved scope.
+
 ## Getting Started
 
 First, run the development server:

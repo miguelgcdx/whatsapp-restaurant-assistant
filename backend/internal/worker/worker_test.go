@@ -100,7 +100,7 @@ func waitSocket(t *testing.T, path string) {
 func start(t *testing.T, s *memoryStore, o worker.Options, sender worker.Sender) (string, context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	if o.SocketPath == "" {
-		o.SocketPath = filepath.Join(testsocket.Dir(t), "private", "worker.sock")
+		o.SocketPath = testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "private", "worker.sock"))
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -213,7 +213,7 @@ func TestStoreFailureReturnsWithoutSpin(t *testing.T) {
 	s.fail = true
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := worker.Run(ctx, s, senderFunc(accepted), worker.Options{SocketPath: filepath.Join(testsocket.Dir(t), "private", "w.sock")})
+	err := worker.Run(ctx, s, senderFunc(accepted), worker.Options{SocketPath: testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "private", "w.sock"))})
 	if err == nil || s.count() != 1 {
 		t.Fatalf("err=%v calls=%d", err, s.count())
 	}
@@ -235,7 +235,7 @@ func TestSocketOwnership(t *testing.T) {
 	if e := os.WriteFile(target, []byte("keep"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	link := filepath.Join(other, "w.sock")
+	link := testsocket.RelativeSocketPath(t, filepath.Join(other, "w.sock"))
 	if e := os.Symlink(target, link); e != nil {
 		t.Fatal(e)
 	}
@@ -252,7 +252,7 @@ func TestStaleSocketRestart(t *testing.T) {
 	if e := os.Mkdir(dir, 0700); e != nil {
 		t.Fatal(e)
 	}
-	path := filepath.Join(dir, "w.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(dir, "w.sock"))
 	c, e := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if e != nil {
 		t.Fatal(e)
@@ -262,7 +262,7 @@ func TestStaleSocketRestart(t *testing.T) {
 }
 func TestInvalidOptions(t *testing.T) {
 	for _, o := range []worker.Options{{RecoveryInterval: -1}, {Lease: -1}, {SendTimeout: -1}, {Lease: time.Second, SendTimeout: time.Second}} {
-		o.SocketPath = filepath.Join(testsocket.Dir(t), "private", "w.sock")
+		o.SocketPath = testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "private", "w.sock"))
 		if e := worker.Run(context.Background(), newStore(), senderFunc(accepted), o); e == nil {
 			t.Fatal("invalid options accepted")
 		}

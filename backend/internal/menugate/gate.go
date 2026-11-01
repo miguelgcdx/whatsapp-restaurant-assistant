@@ -185,14 +185,14 @@ func (g *Gate) check(parent context.Context, source cart.Source, job foundation.
 		return 0, ErrUnavailable
 	}
 	defer cleanup(tx)
-	mode, version, err := lockSource(ctx, tx, g.restaurant, scopeOf(source))
+	mode, version, route, err := lockExecutionSource(ctx, tx, g.restaurant, source)
 	if err != nil {
 		return 0, err
 	}
-	if mode != "ai" || expected != nil && version != *expected {
+	if !route.permitsAI(mode, version) || expected != nil && version != *expected {
 		return 0, ErrControlChanged
 	}
-	guard, err := postgres.LockExecutionJob(ctx, tx, source.EventUUID(), source.Sender(), job)
+	guard, err := route.lockJob(ctx, tx, source, job)
 	if err != nil {
 		if errors.Is(err, foundation.ErrStaleLease) {
 			return 0, foundation.ErrStaleLease

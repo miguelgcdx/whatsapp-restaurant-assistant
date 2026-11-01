@@ -125,7 +125,7 @@ func TestSeparateProcessesDurabilityWakeAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	socket := filepath.Join(testsocket.Dir(t), "worker.sock")
+	socket := testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "worker.sock"))
 	type wire struct {
 		EventID  string `json:"event_id"`
 		EffectID string `json:"effect_id"`

@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Local AI runtime state
+.atl/
+
+# Publication safety: local worktrees and private key material
+/.worktrees/
+*.key
+*.p12
+*.pfx
+secrets/
+

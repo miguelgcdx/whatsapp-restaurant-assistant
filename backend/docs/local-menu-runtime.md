@@ -2,8 +2,9 @@
 
 Migration11 and native admission are **prerequisites**, not a runnable menu pipeline.
 `cart.Store.AcceptMenu` admits pinned LOCAL events; `ReadAdmission` resolves their
-historical receipts. Native scoped claims and guarded no-reply retirement are
-available; gate integration and the runtime host remain pending. Legacy ACKs remain unchanged.
+historical receipts. Native claims, guarded no-reply retirement and route-aware
+`Run`/`RunAndQueue` are connected; the runtime host remains pending.
+Legacy ACKs remain unchanged.
 No new command is available; the native legacy menu-gate callers remain supported.
 
 ## Persisted format
@@ -77,9 +78,14 @@ No model/provider I/O or automatic worker routing is added by these native APIs.
 
 ## Dependent work still pending
 
-Gate epoch checks and the fixture host remain pending. The selected return-to-AI policy is **only new messages**: keep older inbound
-history, but never make it newly eligible for delayed AI conversational replies
-just because staff returns control, including replay/restart. This policy is not
-fully implemented until the native lifecycle and epoch-aware gate are connected. Staff messaging and order-status
-notifications are not governed by that AI-reply policy. No live model/provider,
-production delivery, independent verification or complete runtime proof is claimed.
+The fixture host remains pending; no new command is available.
+The gate reads the persisted route and reuses its canonical full-claim/fresh-clock guard.
+Native work requires current AI mode/version equal to immutable admission before model
+and queue commit. Epoch drift is `ErrControlChanged`; invalid claims retain
+`ErrStaleLease` under each API's existing precedence. Authority/lease rejections return
+whole-zero outputs without durable effects; commit errors may remain uncertain.
+`Run` is ephemeral; `RunAndQueue` stores the exact final Reply, readable as history.
+The selected policy is **only new messages**: older persisted history never regains
+AI eligibility on return, replay or restart. Staff messaging and order-status
+notifications are outside that AI-reply policy. No live provider, production delivery,
+independent verification or complete runtime proof is claimed.

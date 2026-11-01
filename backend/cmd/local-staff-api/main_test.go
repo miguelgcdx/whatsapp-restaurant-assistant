@@ -16,16 +16,143 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"restaurant-assistant/backend/internal/cart"
 	"restaurant-assistant/backend/internal/catalog"
 	"restaurant-assistant/backend/internal/foundation"
 	"restaurant-assistant/backend/internal/postgres"
 	"restaurant-assistant/backend/internal/staff"
 	"restaurant-assistant/backend/internal/staffavailability"
 	"restaurant-assistant/backend/internal/staffcatalog"
+	"restaurant-assistant/backend/internal/stafforders"
 	"restaurant-assistant/backend/internal/testpg"
 	"strings"
 	"testing"
 )
+
+// These requests exercise the actual orders handler without a database or JWKS
+// listener: valid request shapes must be rejected before either lazy dependency
+// is contacted. A plain legacy fallback cannot satisfy the orders envelope.
+func TestOrdersDispatcherUnauthenticated(t *testing.T) {
+	const restaurant = "11111111-1111-4111-8111-111111111111"
+	const orderID = "22222222-2222-4222-8222-222222222222"
+	const summaryID = "33333333-3333-4333-8333-333333333333"
+	store, err := cart.OpenStore(t.Context(), "postgres://fictional@127.0.0.1:1/restaurant_foundation_absent?sslmode=disable", restaurant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pickup, err := cart.NewPickupStore(store, restaurant, cart.PickupCompletionAssessmentVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := staff.NewVerifier("http://127.0.0.1:3000", "http://127.0.0.1:1/api/auth/jwks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders, err := stafforders.NewHandler(pickup, verifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := http.HandlerFunc(http.NotFound)
+	handler := dispatch(fallback, fallback, fallback, orders)
+	for _, tc := range []struct {
+		name, method, path, body string
+	}{
+		{"list", "GET", "/v1/staff/orders", ""},
+		{"detail", "GET", "/v1/staff/orders/" + orderID, ""},
+		{"units", "GET", "/v1/staff/orders/" + orderID + "/summaries/" + summaryID + "/units", ""},
+		{"action", "POST", "/v1/staff/orders/" + orderID + "/actions", `{"action":"accept","expected_version":"0"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Idempotency-Key", "host-unauthenticated-action")
+			}
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if res.Code != http.StatusUnauthorized || res.Header().Get("Content-Type") != "application/json" || res.Header().Get("Cache-Control") != "no-store" || res.Header().Get("Location") != "" || res.Header().Get("Allow") != "" {
+				t.Fatalf("orders route: status=%d headers=%v body=%q", res.Code, res.Header(), res.Body.String())
+			}
+			var envelope struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+				RequestID string `json:"request_id"`
+			}
+			if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			id, err := hex.DecodeString(envelope.RequestID)
+			if err != nil || len(id) != 16 || hex.EncodeToString(id) != envelope.RequestID {
+				t.Fatalf("invalid request ID: %q", envelope.RequestID)
+			}
+			want := `{"error":{"code":"unauthenticated","message":"Authentication is required."},"request_id":"` + envelope.RequestID + "\"}\n"
+			if res.Body.String() != want {
+				t.Fatalf("orders response=%q want=%q", res.Body.String(), want)
+			}
+		})
+	}
+}
+
+func TestDispatcherPreservesOriginalPaths(t *testing.T) {
+	marker := func(name string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, "%s %s %s?%s", name, r.Method, r.URL.Path, r.URL.RawQuery)
+		})
+	}
+	handler := dispatch(marker("access"), marker("catalog"), marker("availability"), marker("orders"))
+	for _, tc := range []struct{ method, path, target string }{
+		{"GET", "/v1/staff/access", "access"},
+		{"GET", "/v1/staff/catalog?limit=2", "catalog"},
+		{"PATCH", "/v1/staff/catalog/items/22222222-2222-4222-8222-222222222222/availability", "availability"},
+		{"PATCH", "/v1/staff/restaurant/availability", "availability"},
+		{"GET", "/v1/staff/orders?limit=2&cursor=opaque", "orders"},
+		{"GET", "/v1/staff/orders/22222222-2222-4222-8222-222222222222", "orders"},
+		{"GET", "/v1/staff/orders/22222222-2222-4222-8222-222222222222/summaries/33333333-3333-4333-8333-333333333333/units?limit=2&cursor=opaque", "orders"},
+		{"POST", "/v1/staff/orders/22222222-2222-4222-8222-222222222222/actions", "orders"},
+		{"GET", "/unknown", "access"},
+		{"GET", "/v1/staff//orders", "access"},
+		{"GET", "/v1/staff/../staff/orders", "access"},
+		{"GET", "//v1/staff/orders", "access"},
+		{"GET", "/v1/staff/orders/id/actions/", "access"},
+		{"GET", "/v1/staff/orders/id/summaries/id/units/", "access"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			want := fmt.Sprintf("%s %s %s?%s", tc.target, tc.method, req.URL.Path, req.URL.RawQuery)
+			if res.Code != http.StatusAccepted || res.Body.String() != want || res.Header().Get("Location") != "" {
+				t.Fatalf("dispatch: status=%d headers=%v body=%q want=%q", res.Code, res.Header(), res.Body.String(), want)
+			}
+		})
+	}
+}
+
+func TestOrdersHelp(t *testing.T) {
+	var out, errout bytes.Buffer
+	code := execute(t.Context(), []string{"-help"}, func(string) string {
+		t.Fatal("help read environment")
+		return ""
+	}, &out, &errout)
+	if code != 0 || out.String() != apiHelp || errout.Len() != 0 {
+		t.Fatalf("help: exit=%d stdout=%q stderr=%q", code, out.String(), errout.String())
+	}
+	for _, text := range []string{
+		"GET /v1/staff/orders",
+		"GET /v1/staff/orders/{id}",
+		"GET /v1/staff/orders/{id}/summaries/{summary_id}/units",
+		"POST /v1/staff/orders/{id}/actions",
+		"process-local",
+	} {
+		if !strings.Contains(out.String(), text) {
+			t.Errorf("help missing %q", text)
+		}
+	}
+}
 
 func TestProductionDispatcher(t *testing.T) {
 	const restaurant = "11111111-1111-4111-8111-111111111111"
@@ -101,7 +228,7 @@ func TestProductionDispatcher(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			server := httptest.NewServer(dispatch(access, catalogHandler, availabilityHandler))
+			server := httptest.NewServer(dispatch(access, catalogHandler, availabilityHandler, http.NotFoundHandler()))
 			defer server.Close()
 			client := server.Client()
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -195,7 +322,7 @@ func TestProductionDispatcher(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		server := httptest.NewServer(dispatch(access, read, write))
+		server := httptest.NewServer(dispatch(access, read, write, http.NotFoundHandler()))
 		for _, target := range []struct{ path, field string }{{"/v1/staff/catalog/items/" + items[0].ID + "/availability", "available"}, {"/v1/staff/restaurant/availability", "open"}} {
 			body := fmt.Sprintf(`{"expected_version":"%d","%s":false}`, index, target.field)
 			req, err := http.NewRequestWithContext(t.Context(), "PATCH", server.URL+target.path, strings.NewReader(body))

@@ -1,5 +1,7 @@
-// Package cart owns local-fixture drafts only. Its context is not customer
-// authentication, a verified sender, or authority to submit an order.
+// Package cart owns local-fixture drafts and the explicitly configured LOCAL
+// pickup lifecycle. A local context alone is not customer authentication, a
+// verified sender, or submission authority; pickup requires stored presentation,
+// current execution authority and correlated completion evidence.
 package cart
 
 import (

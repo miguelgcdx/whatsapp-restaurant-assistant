@@ -50,7 +50,7 @@ func TestStartWaitsForRunStartup(t *testing.T) {
 			s.mu.Unlock()
 		}
 	}()
-	path := filepath.Join(testsocket.Dir(t), "private", "worker.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "private", "worker.sock"))
 	returned := make(chan struct{})
 	go func() {
 		start(t, s, worker.Options{SocketPath: path}, senderFunc(accepted))
@@ -117,7 +117,7 @@ func TestSocketDirectoryAndLockGuards(t *testing.T) {
 	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0755 {
 		t.Fatalf("public directory fixture must have mode 0755: info=%v err=%v", info, err)
 	}
-	publicPath := filepath.Join(dir, "w.sock")
+	publicPath := testsocket.RelativeSocketPath(t, filepath.Join(dir, "w.sock"))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	err := worker.Run(ctx, newStore(), senderFunc(accepted), worker.Options{SocketPath: publicPath})
 	contextErr := ctx.Err()
@@ -138,7 +138,7 @@ func TestSocketDirectoryAndLockGuards(t *testing.T) {
 	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(private, "w.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(private, "w.sock"))
 	if err := os.Symlink(target, path+".lock"); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestDurableTimerRestartAndOutcomes(t *testing.T) {
 		sent <- d.EventID
 		return foundation.SendResult{State: foundation.SendState(d.EventID), ProviderID: map[string]string{"accepted": "provider"}[d.EventID]}
 	})
-	path := filepath.Join(testsocket.Dir(t), "private", "w.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(testsocket.Dir(t), "private", "w.sock"))
 	launch := func() (context.CancelFunc, <-chan error) {
 		c, cancel := context.WithCancel(ctx)
 		done := make(chan error, 1)

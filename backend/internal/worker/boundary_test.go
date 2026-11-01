@@ -24,7 +24,7 @@ func TestSymlinkAncestorDoesNotCreateState(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(link, "new", "w.sock")
+	path := testsocket.RelativeSocketPath(t, filepath.Join(link, "new", "w.sock"))
 	if err := worker.Run(context.Background(), newStore(), senderFunc(accepted), worker.Options{SocketPath: path}); err == nil {
 		t.Fatal("accepted symlink ancestor")
 	}

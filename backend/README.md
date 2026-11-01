@@ -86,7 +86,40 @@ The [LOCAL menu-message route](docs/local-menu-runtime.md) adds migration11
 provenance, legacy consumer fencing and native atomic `AcceptMenu`/`ReadAdmission`.
 Admission requires existing owned LOCAL setup and authenticated control; historical
 receipts never grant current AI permission. Native scoped claims and guarded
-no-reply retirement are available; gate integration and a runnable host remain pending.
+no-reply retirement connect to the route-aware gate with immutable/current AI epoch
+and canonical claim checks, exact Reply/history and no-effect authority rejection.
+The runnable host remains pending; no new command or complete runtime approval.
+
+## Supported local migration boundaries
+
+`local-migrate` applies embedded migrations forward; it exposes no down command.
+Use only an explicitly owned disposable LOCAL database, never valuable data.
+The migration tests exercise historical boundaries, not a general promise that
+any populated current database can be downgraded safely:
+
+- **v10 → current:** preserved legacy events, jobs, outbox, attempts, controls,
+  counters and replay behavior are checked by
+  [`TestMenuRuntimeMigrationPreservesV10AndDown`](internal/postgres/menu_runtime_test.go).
+  Its empty-new-history rollback traverses v12 → v11 → v10 and checks the restored
+  v10 schema and Goose bookkeeping. This does not authorize deleting new history.
+- **v11 → v10:** migration 11 refuses rollback when menu admission history exists,
+  including AI and staff/no-reply cases. Refusal preserves rows, counters, schema,
+  migration version and public processing snapshots.
+- **v10 → v9:** migration 10 refuses rollback with AI outbox history, including
+  suppressed send attempts. The legacy-only case retains its exact content and
+  pending state through rollback; it is not an AI-history conversion procedure.
+- **v12 → v11:** migration 12 refuses rollback with native cart admission history;
+  the test checks that data, counters, schema, version and snapshot stay unchanged.
+
+The guards live in [migration 10](internal/postgres/migrations/00010_local_outbox_ai.sql),
+[migration 11](internal/postgres/migrations/00011_local_menu_runtime.sql) and
+[migration 12](internal/postgres/migrations/00012_native_cart_actions.sql).
+See the menu-runtime tests above and
+[`outbox_ai_migration_test.go`](internal/postgres/outbox_ai_migration_test.go).
+Run their existing isolated fixture checks with `go test -count=1 -timeout=180s
+./internal/postgres` from `backend`; no live database URL is needed. These are
+supported test boundaries, not a fresh execution result or a production rollback
+recommendation. Never erase history or change its route to bypass a guard.
 
 ## Verify the complete local loop
 

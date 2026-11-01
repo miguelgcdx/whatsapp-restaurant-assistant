@@ -118,6 +118,12 @@ func QuoteCall(id CartID) (Call, error) {
 	return Call{req: request{Action: "quote", Cart: id.value}, draft: &draftRequest{"draft-v1", "quote", id.value, 0, nil}}, nil
 }
 func encodeCall(c Call) ([]byte, error) {
+	if c.unresolved != nil || c.resolution != nil {
+		return encodeAmbiguousEditCall(c)
+	}
+	if c.pickup != nil {
+		return json.Marshal(c.pickup)
+	}
 	if c.preview != nil {
 		return json.Marshal(c.preview)
 	}

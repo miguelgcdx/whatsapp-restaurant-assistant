@@ -15,10 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	"restaurant-assistant/backend/internal/cart"
 	"restaurant-assistant/backend/internal/catalog"
 	"restaurant-assistant/backend/internal/staff"
 	"restaurant-assistant/backend/internal/staffavailability"
 	"restaurant-assistant/backend/internal/staffcatalog"
+	"restaurant-assistant/backend/internal/stafforders"
 )
 
 const apiHelp = `Usage: local-staff-api [-listen 127.0.0.1:8081]
@@ -36,6 +38,13 @@ and one Idempotency-Key (1-128 printable ASCII, no whitespace); no cursor key ne
 Versions are canonical nonnegative int64 decimal strings. No query/extra fields.
 409 version_conflict requires refresh; idempotency_conflict means changed key/body.
 Same-key/body retries replay the original result after current authorization.
+GET /v1/staff/orders lists pickup orders; optional limit=1..100 and cursor.
+GET /v1/staff/orders/{id} reads pickup order detail.
+GET /v1/staff/orders/{id}/summaries/{summary_id}/units pages confirmed units.
+POST /v1/staff/orders/{id}/actions: {action:STRING,expected_version:STRING}.
+Orders require the same JWT/current membership; actions require application/json
+and Idempotency-Key. Orders cursors are process-local and invalid after restart;
+STAFF_CATALOG_CURSOR_KEY is not required for orders.
 No automatic mutation retry; preserve the exact key/body for an uncertain outcome.
 No migrations or runtime fixture provisioning. Errors are redacted.
 `
@@ -83,7 +92,20 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	if e != nil {
 		return e
 	}
-	combined := dispatch(h, catalogHandler, availabilityHandler)
+	cartStore, e := cart.OpenStore(ctx, getenv("LOCAL_DATABASE_URL"), restaurant)
+	if e != nil {
+		return e
+	}
+	defer cartStore.Close()
+	pickupStore, e := cart.NewPickupStore(cartStore, restaurant, cart.PickupCompletionAssessmentVersion)
+	if e != nil {
+		return e
+	}
+	ordersHandler, e := stafforders.NewHandler(pickupStore, v)
+	if e != nil {
+		return e
+	}
+	combined := dispatch(h, catalogHandler, availabilityHandler, ordersHandler)
 	listener, e := net.Listen("tcp", *listen)
 	if e != nil {
 		return staff.ErrUnavailable
@@ -114,8 +136,12 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 // dispatch deliberately avoids ServeMux cleaning/redirects. The original
 // access handler still owns every legacy access and unknown-path response.
-func dispatch(access, catalog, availability http.Handler) http.Handler {
+func dispatch(access, catalog, availability, orders http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stafforders.Matches(r.URL.Path) {
+			orders.ServeHTTP(w, r)
+			return
+		}
 		if staffavailability.Matches(r.URL.Path) {
 			availability.ServeHTTP(w, r)
 			return

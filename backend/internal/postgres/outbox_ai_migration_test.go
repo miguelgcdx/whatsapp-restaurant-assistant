@@ -3,6 +3,8 @@ package postgres_test
 import (
 	"errors"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +74,13 @@ func TestOutboxAIMigration(t *testing.T) {
 	snapshot, err := store.Inspect(ctx, event.ID)
 	if err != nil || snapshot.JobState != "completed" || snapshot.OutboxState != "accepted" || snapshot.ProviderID != "legacy-provider-id" || snapshot.JobCount != 1 || snapshot.OutboxCount != 1 {
 		t.Fatal(snapshot, err)
+	}
+}
+
+func assertMigrationVersion(t *testing.T, p *goose.Provider, want int64) {
+	t.Helper()
+	if got, err := p.GetDBVersion(t.Context()); err != nil || got != want {
+		t.Fatalf("migration version = %d, want %d: %v", got, want, err)
 	}
 }
 
@@ -219,13 +228,19 @@ func TestOutboxAISuppressedHistoryDown(t *testing.T) {
 	assertHistory()
 	p, closeDB := aiMigrationProvider(t, dsn)
 	defer closeDB()
-	// No menu jobs: first remove 11, then prove the original 10 -> 9 refusal.
-	if _, err = p.Down(ctx); err != nil {
+	// Empty native/menu history may roll back; AI history must stop 10 -> 9.
+	if _, err = p.DownTo(ctx, 10); err != nil {
 		t.Fatal(err)
 	}
+	assertMigrationVersion(t, p, 10)
 	before = capture()
-	if _, err = p.Down(ctx); err == nil || err.Error() == "" {
+	rowsBefore := menuRows(t, c, false)
+	if _, err = p.DownTo(ctx, 9); err == nil || err.Error() == "" || !strings.Contains(err.Error(), "AI history prevents migration 10 rollback") {
 		t.Fatal("suppressed history did not reject Down", err)
+	}
+	assertMigrationVersion(t, p, 10)
+	if after := menuRows(t, c, false); !reflect.DeepEqual(after, rowsBefore) {
+		t.Fatal("refused Down changed rows/counters/schema/Goose", rowsBefore, after)
 	}
 	assertHistory()
 	if after := capture(); after != before {
@@ -273,15 +288,28 @@ func TestOutboxAIDown(t *testing.T) {
 			}
 			p, closeDB := aiMigrationProvider(t, dsn)
 			defer closeDB()
-			if _, err = p.Down(t.Context()); err != nil {
+			if _, err = p.DownTo(t.Context(), 10); err != nil {
 				t.Fatal(err)
 			}
-			_, err = p.Down(t.Context())
+			assertMigrationVersion(t, p, 10)
+			before := menuRows(t, c, false)
+			_, err = p.DownTo(t.Context(), 9)
 			if ai && err == nil {
 				t.Fatal("AI history was erased by Down")
 			}
 			if !ai && err != nil {
 				t.Fatal(err)
+			}
+			if ai {
+				if !strings.Contains(err.Error(), "AI history prevents migration 10 rollback") {
+					t.Fatal("wrong AI rollback refusal", err)
+				}
+				assertMigrationVersion(t, p, 10)
+				if after := menuRows(t, c, false); !reflect.DeepEqual(after, before) {
+					t.Fatal("refused Down changed rows/counters/schema/Goose", before, after)
+				}
+			} else {
+				assertMigrationVersion(t, p, 9)
 			}
 			var content, state string
 			if err = c.QueryRow(t.Context(), `SELECT content,state FROM app.outbox`).Scan(&content, &state); err != nil || content != " exact AI bytes " || state != "pending" {
