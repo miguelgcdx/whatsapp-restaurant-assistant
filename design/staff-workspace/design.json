@@ -1,0 +1,28 @@
+{
+  "title": "Staff workspace",
+  "brief": "Design-only staff dashboard and catalog using existing access and item/restaurant availability capabilities. Warm stone, dark forest ink, system typography, responsive layouts and explicitly fictional bowl/soup/tea fixtures. No live actions or operational claims. Recommend the quiet sidebar for implementation.",
+  "feature": "odd/tasks/staff-frontend.md",
+  "artboards": [
+    {
+      "file": "01-sidebar.html",
+      "title": "Quiet sidebar — recommended",
+      "tradeoff": "Persistent navigation and calm item rows give clear orientation and readable availability; the sidebar uses horizontal space and becomes a compact navigation band on mobile.",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "02-topbar.html",
+      "title": "Compact topbar",
+      "tradeoff": "Top navigation frees width for spacious item cards and a prominent restaurant status band; cards are slower to compare and require more scrolling on mobile.",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "03-workbench.html",
+      "title": "Dense list workbench",
+      "tradeoff": "Aligned compact rows favor rapid price and availability comparison with separate restaurant controls; the denser desktop layout has less breathing room and stacks the restaurant panel first on mobile.",
+      "width": 1440,
+      "height": 1000
+    }
+  ]
+}

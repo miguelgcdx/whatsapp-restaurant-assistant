@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "Local staff access",
-  description: "Local restaurant staff access foundation",
+  title: "Sign Restaurant",
+  description: "Local staff workspace for restaurant catalog and availability",
 };
 export default function RootLayout({
   children,

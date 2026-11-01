@@ -59,6 +59,13 @@ Configure Go from the nonsecret restaurant UUID and exact auth origin:
 Start each listener explicitly on numeric loopback. Setup is not automatic on
 server start or build.
 
+For local staff sign-in, first run `pnpm build` with runtime auth configuration
+unset. Set the runtime values above, then run `pnpm start:local --port <port>`;
+the port must match `BETTER_AUTH_URL`. Configure and start Go separately as
+above. `pnpm dev:local` remains available for UI development. Building does not
+provision fixtures or embed their private state. This local runtime choice does
+not establish the cause of a JWKS timeout or change authentication deadlines.
+
 ## Browser and server boundaries
 
 Sign in at `/sign-in`; `/dashboard` displays staff name/access state, sign-out
@@ -100,6 +107,10 @@ access. No order counts, settings or business defaults are fabricated.
 
 ## Verification and evidence
 
+- `pnpm test:dashboard:built-first-sign-in`: after a fresh `pnpm build`, use
+  owned disposable fixtures and assert the first real sign-in reaches the
+  authorized dashboard with visible access. This focused check does not replace
+  the development-only DevTools checks or the full rejection/outage suite.
 - `pnpm test:auth`: contract/auth components on fresh temporary PostgreSQL, real
   supported Better Auth APIs, sessions and JWTs. Only `server-only` is stubbed.
   The fake Go in `access.test.ts` and operator callback in `setup.test.ts` remain

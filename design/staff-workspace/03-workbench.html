@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staff workspace — List workbench</title>
+<style>
+:root { color-scheme:light; --paper:#f5f3ee; --white:#fffefa; --ink:#203c32; --muted:#57645b; --line:#c9cec4; --soft:#e8ede5; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.55 Arial, Helvetica, sans-serif; }
+a { color:inherit; text-underline-offset:4px; }
+:focus-visible { outline:3px solid #77501d; outline-offset:4px; }
+.skip { position:absolute; top:-80px; left:16px; padding:12px; background:var(--white); }
+.skip:focus { top:12px; }
+.topbar { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:16px 32px; background:var(--ink); color:var(--white); }
+.brand { font-size:18px; font-weight:700; }
+nav { display:flex; gap:24px; }
+nav a { padding:10px 0; }
+nav a[aria-current] { font-weight:700; text-decoration-thickness:3px; }
+main { padding:32px; max-width:1440px; margin:auto; }
+h1 { font-size:28px; line-height:1.2; letter-spacing:-.03em; margin:8px 0; }
+h2 { font-size:20px; margin:0; }
+h3 { font-size:16px; margin:0; }
+p { margin:8px 0; }
+.eyebrow { font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.muted, small { color:var(--muted); }
+.notice { background:var(--soft); border-left:3px solid var(--ink); padding:10px 16px; margin:20px 0 28px; }
+.workspace { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:24px; align-items:start; }
+.catalog { background:var(--white); border:1px solid var(--line); }
+.catalog-head { padding:20px; border-bottom:1px solid var(--line); }
+.list-head, .items li { display:grid; grid-template-columns:minmax(170px,1fr) 90px 110px 180px; gap:16px; align-items:center; padding:16px 20px; }
+.list-head { background:var(--soft); font-size:13px; font-weight:700; }
+.items { list-style:none; padding:0; margin:0; }
+.items li + li { border-top:1px solid var(--line); }
+.price { font-weight:600; font-variant-numeric:tabular-nums; }
+button { min-height:44px; font:inherit; font-weight:600; padding:8px 12px; background:var(--white); color:var(--ink); border:1px solid var(--ink); border-radius:4px; }
+button:disabled { opacity:1; cursor:not-allowed; }
+.restaurant { border-top:4px solid var(--ink); background:var(--white); padding:20px; }
+.restaurant button { width:100%; margin:16px 0; }
+.account { border-top:1px solid var(--line); margin-top:20px; padding-top:16px; }
+footer { display:flex; justify-content:space-between; gap:20px; border-top:1px solid var(--line); padding:16px 20px; }
+@media (max-width:1100px) {
+  .workspace { grid-template-columns:1fr; }
+  .restaurant { grid-row:1; }
+}
+@media (max-width:700px) {
+  main { padding:24px 16px; }
+  .topbar { flex-wrap:wrap; padding:16px; }
+  .list-head { display:none; }
+  .items li { grid-template-columns:1fr auto; gap:12px; }
+  .items button { justify-self:end; }
+  footer { flex-wrap:wrap; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><span class="brand">Table &amp; Hearth / Staff workspace</span><nav aria-label="Staff navigation"><a href="#overview">Overview</a><a href="#catalog" aria-current="page">Catalog</a></nav></header>
+<main id="main" tabindex="-1">
+  <header id="overview"><span class="eyebrow">03 / List workbench</span><h1>Staff dashboard</h1><p>Staff access confirmed.</p></header>
+  <p class="notice">Design preview only. Restaurant, staff and menu are fictional. All action buttons are inactive; availability shown is sample data, not live.</p>
+  <div class="workspace">
+    <section class="catalog" id="catalog" aria-labelledby="catalog-title">
+      <header class="catalog-head"><h2 id="catalog-title">Staff catalog</h2><h3 style="margin-top:16px">Current page</h3><p class="muted">Showing 3 items on this page. Availability may change between pages.</p></header>
+      <div class="list-head" aria-hidden="true"><span>Menu item · fictional</span><span>Price</span><span>Availability</span><span>Action</span></div>
+      <ul class="items">
+        <li><div><h3>Roasted vegetable bowl</h3><small>Fictional menu item</small></div><span class="price">USD6.50</span><span>Available</span><button type="button" aria-label="Mark unavailable: Roasted vegetable bowl" disabled>Mark unavailable</button></li>
+        <li><div><h3>Garden soup</h3><small>Fictional menu item</small></div><span class="price">USD4.50</span><span>Unavailable</span><button type="button" aria-label="Mark available: Garden soup" disabled>Mark available</button></li>
+        <li><div><h3>Mint tea</h3><small>Fictional menu item</small></div><span class="price">USD2.00</span><span>Available</span><button type="button" aria-label="Mark unavailable: Mint tea" disabled>Mark unavailable</button></li>
+      </ul>
+      <footer><p>End of menu.</p><a href="#catalog">Start again</a></footer>
+    </section>
+    <section class="restaurant" aria-labelledby="restaurant-title">
+      <h2 id="restaurant-title">Restaurant availability</h2><p>Restaurant is open.</p>
+      <button type="button" disabled>Close restaurant</button>
+      <p class="muted">Restaurant status and item availability are separate controls.</p>
+      <div class="account"><p>Signed in as Alex.</p><button type="button" disabled>Sign out</button></div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

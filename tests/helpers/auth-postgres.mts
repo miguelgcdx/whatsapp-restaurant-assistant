@@ -15,6 +15,9 @@ export async function startAuthPostgres() {
     PATH: process.env.PATH,
     HOME: root,
     LANG: "C",
+    TMPDIR: process.env.TMPDIR,
+    TMP: process.env.TMP,
+    TEMP: process.env.TEMP,
   };
   const run = (name: string, args: string[]) =>
     exec(name, args, { env, timeout: 20_000 });

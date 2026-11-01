@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "next dev",
     "dev:local": "next dev --hostname 127.0.0.1",
+    "start:local": "next start --hostname 127.0.0.1",
     "test": "vitest run",
     "test:auth": "vitest run tests/contracts tests/auth",
     "setup:auth": "node --conditions=react-server scripts/local-auth/setup.mts",
     "test:dashboard": "node --conditions=react-server tests/integration/dashboard.mts",
+    "test:dashboard:built-first-sign-in": "node --conditions=react-server tests/integration/dashboard.mts --built-first-sign-in",
     "typecheck": "tsc --noEmit",
     "build": "next build",
     "start": "next start",

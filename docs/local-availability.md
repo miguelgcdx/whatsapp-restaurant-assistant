@@ -14,6 +14,24 @@ There is no name, price, currency, fee, settings or order editor. No new configu
 dependency, provisioning default, live service or publication is introduced. The browser
 receives public DTOs, never a JWT, session object or caller authority.
 
+## Contextual accessibility
+
+Each item's control region is named by its visible item heading via `aria-labelledby`.
+A persistent `output` (implicit status role), including when empty, uses the same heading
+and has a unique ID referenced by the primary button's `aria-describedby`. Restaurant
+controls retain their existing region label and have contextual feedback naming.
+Existing pending, disabled and `aria-busy` behavior is unchanged.
+
+The owned authenticated browser journey checks two item regions without positional
+selectors, persistent associated feedback, and pending/conflict/uncertain/retry behavior.
+These DOM assertions do not prove assistive-technology speech.
+
+Observed contextual-accessibility verification: lint, nonincremental typecheck, all 43
+component/contract tests and production build passed. The first browser run failed on
+an incorrect test assumption that an action label stays unchanged after authoritative
+refresh. After correcting that assertion, one explicitly authorized fresh browser run
+passed the full owned journey. No preimplementation RED or manual AT validation is claimed.
+
 ## Pending, conflicts and uncertain outcomes
 
 A deliberate click creates one random intent key with the displayed version and desired

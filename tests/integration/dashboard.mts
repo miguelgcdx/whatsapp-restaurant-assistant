@@ -11,6 +11,7 @@ import {
   type BrowserContext,
   chromium,
   expect,
+  type Page,
 } from "@playwright/test";
 import { z } from "zod";
 import { catalogSchema } from "../../src/contracts/staff-catalog.ts";
@@ -21,6 +22,11 @@ import { startAuthPostgres } from "../helpers/auth-postgres.mts";
 
 // Real owned Next + Go + PostgreSQL only. No fake providers, auth tables or inherited DSNs.
 const root = fileURLToPath(new URL("../../", import.meta.url));
+const builtFirstSignIn =
+  process.argv.slice(2).length === 1 &&
+  process.argv[2] === "--built-first-sign-in";
+class FirstSignInComplete extends Error {}
+let firstSignInComplete = false;
 const temporary = await mkdtemp(join(tmpdir(), "staff-dashboard-e2e-"));
 const pg = await startAuthPostgres();
 const port = async () => {
@@ -46,9 +52,13 @@ const env: NodeJS.ProcessEnv = {
   HOME: process.env.HOME,
   LANG: "C",
   TMPDIR: process.env.TMPDIR,
+  TMP: process.env.TMP,
+  TEMP: process.env.TEMP,
   NO_UPDATE_NOTIFIER: "1",
   NEXT_TELEMETRY_DISABLED: "1",
   GOTOOLCHAIN: "local",
+  GOWORK: "off",
+  GOENV: "off",
   GOTELEMETRY: "off",
   GOPROXY: "off",
   GOFLAGS: "-mod=readonly",
@@ -184,14 +194,18 @@ const node = process.execPath;
 const setup = () =>
   run(node, ["--conditions=react-server", "scripts/local-auth/setup.mts"]);
 const next = () =>
-  start(node, [
-    "node_modules/next/dist/bin/next",
-    "dev",
-    "--hostname",
-    "127.0.0.1",
-    "--port",
-    new URL(origin).port,
-  ]);
+  start(
+    node,
+    [
+      "node_modules/next/dist/bin/next",
+      builtFirstSignIn ? "start" : "dev",
+      "--hostname",
+      "127.0.0.1",
+      "--port",
+      new URL(origin).port,
+    ],
+    builtFirstSignIn ? { NODE_ENV: "production" } : {},
+  );
 const apiBinary = join(temporary, "local-staff-api");
 const membershipBinary = join(temporary, "local-staff-membership");
 const go = (restaurant: string) =>
@@ -212,6 +226,26 @@ const access = (
   context: BrowserContext,
   headers: Record<string, string> = {},
 ) => context.request.get(`${origin}/api/staff/access`, { headers });
+
+async function expectInstantDashboard(page: Page) {
+  const devtools = page.locator("nextjs-portal");
+  await devtools
+    .getByRole("button", { name: "Open Next.js Dev Tools", exact: true })
+    .last()
+    .click();
+  const menuInsights = devtools.getByRole("menuitem", { name: /Insights/ });
+  if (await menuInsights.count()) await menuInsights.click();
+  const insightsTab = devtools.getByRole("button", { name: /^Insights/ });
+  if (await insightsTab.count()) await insightsTab.click();
+  const diagnostic = devtools.getByText(
+    "Next.js encountered uncached data during a navigation.",
+    { exact: true },
+  );
+  if (await diagnostic.count())
+    console.log("OBSERVED_UNCACHED_DASHBOARD_NAVIGATION");
+  await expect(diagnostic).toHaveCount(0);
+  await page.keyboard.press("Escape");
+}
 
 try {
   const first = await setup();
@@ -289,12 +323,14 @@ try {
   let web = next();
   await ready(`${apiOrigin}/v1/staff/access`, 401);
   await ready(`${origin}/sign-in`, 200);
-  const anonymous = await succeeded(node, [
-    "node_modules/@playwright/test/cli.js",
-    "test",
-  ]);
-  process.stdout.write(anonymous.stdout);
-  process.stderr.write(anonymous.stderr);
+  if (!builtFirstSignIn) {
+    const anonymous = await succeeded(node, [
+      "node_modules/@playwright/test/cli.js",
+      "test",
+    ]);
+    process.stdout.write(anonymous.stdout);
+    process.stderr.write(anonymous.stderr);
+  }
   browser = await chromium.launch({ headless: true, env });
   owner = createAuth({
     target: databaseTarget(pg.dsn),
@@ -318,7 +354,22 @@ try {
     const page = await context.newPage();
     pages.push(page);
     await page.goto(`${origin}/sign-in`);
-    await page.getByLabel("Email", { exact: true }).fill(fixture.email);
+    // Wait for client hydration before exercising the real action navigation.
+    await page
+      .getByRole("button", { name: "Show password", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Hide password", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Hide password", exact: true })
+      .click();
+    let actionNavigation = false;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.headers()["next-action"])
+        actionNavigation = true;
+    });
+    await page.getByLabel("Work email", { exact: true }).fill(fixture.email);
     await page.getByLabel("Password", { exact: true }).fill(fixture.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL(`${origin}/dashboard`);
@@ -328,6 +379,53 @@ try {
     await expect(
       page.getByText(`Signed in as ${fixture.name}.`, { exact: true }),
     ).toBeVisible();
+    assert(
+      actionNavigation,
+      "Sign-in must use the real client action navigation",
+    );
+    stage = "authenticated dashboard instant navigation";
+    await expect(
+      page.getByText("Staff access confirmed.", { exact: true }),
+    ).toBeVisible();
+    if (builtFirstSignIn) throw new FirstSignInComplete();
+    await expectInstantDashboard(page);
+    const staffNav = page.getByRole("navigation", {
+      name: "Staff navigation",
+      exact: true,
+    });
+    await expect(
+      staffNav.getByRole("link", { name: "Overview", exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      staffNav.getByRole("link", { name: "Catalog", exact: true }),
+    ).not.toHaveAttribute("aria-current", "page");
+    await page.setViewportSize({ width: 320, height: 720 });
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    );
+    for (const link of await staffNav.getByRole("link").all()) {
+      const bounds = await link.boundingBox();
+      assert(bounds && bounds.height >= 44 && bounds.width >= 44);
+    }
+    await page.goto(`${origin}/dashboard`);
+    await expect(
+      page.getByRole("heading", { name: "Staff dashboard", exact: true }),
+    ).toBeVisible();
+    const skip = page.getByRole("link", {
+      name: "Skip to content",
+      exact: true,
+    });
+    // Load completed with a zero-size skip link in the retained focus diagnostic.
+    // Visibility requires a rendered box, not intersection with the viewport.
+    await expect(skip).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(skip).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("main")).toBeFocused();
+    await expect(page.getByRole("main")).toHaveAttribute("id", "main-content");
+    await page.setViewportSize({ width: 1280, height: 900 });
     const response = await access(context, {
       Authorization: "Bearer forged",
       "X-Role": "admin",
@@ -358,6 +456,27 @@ try {
   await expect(
     catalogPage.getByRole("heading", { name: "Staff catalog", exact: true }),
   ).toBeVisible();
+  const catalogNav = catalogPage.getByRole("navigation", {
+    name: "Staff navigation",
+    exact: true,
+  });
+  await expect(
+    catalogNav.getByRole("link", { name: "Catalog", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    catalogNav.getByRole("link", { name: "Overview", exact: true }),
+  ).not.toHaveAttribute("aria-current", "page");
+  await catalogPage.setViewportSize({ width: 320, height: 720 });
+  assert(
+    await catalogPage.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  );
+  for (const link of await catalogNav.getByRole("link").all()) {
+    const bounds = await link.boundingBox();
+    assert(bounds && bounds.height >= 44 && bounds.width >= 44);
+  }
+  await catalogPage.setViewportSize({ width: 1280, height: 900 });
   await expect(
     catalogPage.getByText("Restaurant is open.", { exact: true }),
   ).toBeVisible();
@@ -373,6 +492,26 @@ try {
   await expect(
     catalogPage.getByText("Unavailable", { exact: true }),
   ).toBeVisible();
+  for (const name of ["Fictional bowl", "Fictional soup"]) {
+    const region = catalogPage.getByRole("region", { name, exact: true });
+    await expect(region).toHaveCount(1);
+    const headingID = await catalogPage
+      .getByRole("heading", { name, exact: true })
+      .getAttribute("id");
+    assert(headingID);
+    await expect(region).toHaveAttribute("aria-labelledby", headingID);
+    const feedback = region.getByRole("status", { name, exact: true });
+    await expect(feedback).toHaveCount(1);
+    await expect(feedback).toHaveText("");
+    const feedbackID = await feedback.getAttribute("id");
+    assert(feedbackID);
+    await expect(region.getByRole("button")).toHaveAttribute(
+      "aria-describedby",
+      feedbackID,
+    );
+    await expect(region).toHaveAttribute("aria-busy", "false");
+    await expect(region.getByRole("button")).toBeEnabled();
+  }
   await catalogPage.goto(`${origin}/dashboard/catalog?limit=1`);
   await expect(
     catalogPage.getByRole("heading", { name: "Fictional bowl", exact: true }),
@@ -530,6 +669,17 @@ try {
   assert(beforeUnknown);
   let lost: { key: string; body: string } | undefined;
   let lostAttempts = 0;
+  const writeGate = Promise.withResolvers<void>();
+  const bowlControl = bowl.getByRole("region", {
+    name: "Fictional bowl",
+    exact: true,
+  });
+  const bowlFeedback = bowlControl.getByRole("status", {
+    name: "Fictional bowl",
+    exact: true,
+  });
+  const feedbackID = await bowlFeedback.getAttribute("id");
+  assert(feedbackID);
   await catalogPage.route(itemWriteURL, async (route) => {
     lostAttempts++;
     const request = route.request();
@@ -537,6 +687,7 @@ try {
     const body = request.postData();
     assert(key && body);
     lost = { key, body };
+    await writeGate.promise;
     const committed = await route.fetch({ maxRetries: 0, maxRedirects: 0 });
     assert.equal(committed.status(), 200);
     await route.abort("failed");
@@ -544,9 +695,14 @@ try {
   await bowl
     .getByRole("button", { name: "Mark available", exact: true })
     .click();
-  await expect(bowl.getByRole("status")).toHaveText(
+  await expect(bowlControl).toHaveAttribute("aria-busy", "true");
+  await expect(bowlFeedback).toHaveText("Saving availability…");
+  await expect(bowlControl.getByRole("button")).toBeDisabled();
+  writeGate.resolve();
+  await expect(bowlFeedback).toHaveText(
     "The result is uncertain. Retry the same request; do not start a new change.",
   );
+  await expect(bowlFeedback).toHaveAttribute("id", feedbackID);
   assert(lost);
   assert.equal(
     (await readCatalog()).items[0]?.version,
@@ -563,6 +719,11 @@ try {
     bowl.getByRole("button", { name: "Retry same request", exact: true }),
   ).toBeVisible();
   assert.equal(lostAttempts, 1);
+  await expect(bowlFeedback).toHaveAttribute("id", feedbackID);
+  await expect(bowl.getByText("Available", { exact: true })).toBeVisible();
+  await expect(
+    bowlControl.getByRole("button", { name: "Mark unavailable", exact: true }),
+  ).toBeDisabled();
   await catalogPage.unroute(itemWriteURL);
   const retriedRequest = catalogPage.waitForRequest(
     (request) => request.url() === itemWriteURL && request.method() === "PATCH",
@@ -610,7 +771,9 @@ try {
     exact: true,
   });
   await expect(review).toBeEnabled();
+  await expect(bowlFeedback).toHaveAttribute("id", feedbackID);
   await review.click();
+  await expect(bowlFeedback).toHaveText("");
   await expect(
     bowl.getByRole("button", { name: "Mark available", exact: true }),
   ).toBeEnabled();
@@ -963,14 +1126,21 @@ try {
     "PASS owned dashboard integration; no screenshots/traces/storageState or credentials emitted",
   );
 } catch (error) {
-  console.error(`FAIL dashboard integration stage: ${stage}`);
-  console.error(
-    redact(
-      error instanceof Error ? error.message : "Unknown integration error.",
-    ),
-  );
-  for (const child of children) if (child.logs()) console.error(child.logs());
-  process.exitCode = 1;
+  if (error instanceof FirstSignInComplete) {
+    firstSignInComplete = true;
+  } else {
+    console.error(`FAIL dashboard integration stage: ${stage}`);
+    if (!builtFirstSignIn) {
+      console.error(
+        redact(
+          error instanceof Error ? error.message : "Unknown integration error.",
+        ),
+      );
+      for (const child of children)
+        if (child.logs()) console.error(child.logs());
+    }
+    process.exitCode = 1;
+  }
 } finally {
   await browser?.close();
   for (const child of [...children].reverse()) await stop(child);
@@ -978,3 +1148,5 @@ try {
   if (!pgClosed) await pg.close();
   await rm(temporary, { recursive: true, force: true });
 }
+if (firstSignInComplete)
+  console.log("PASS built Next first sign-in and authorized dashboard");

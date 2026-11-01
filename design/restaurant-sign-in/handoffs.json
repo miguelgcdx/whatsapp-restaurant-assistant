@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "02-the-host.html",
+  "handoffs": {
+    "02-the-host.html": {
+      "status": "implemented",
+      "queued": false,
+      "sentAt": "2026-10-28T22:11:10.656Z",
+      "startedAt": "2026-10-28T23:12:11.866Z",
+      "implementedAt": "2026-10-28T23:13:58.918Z",
+      "note": "Implemented in Next.js with the existing server action and route-local Suspense, namespaced page styles, boolean-only password visibility and real useFormStatus pending feedback. Final authorized proof: 7 browser tests, 44 unit/contract tests, TypeScript, lint, actual saved-credential login/own-session logout and isolated production build all pass. Desktop/mobile and light/dark captures reviewed. Prototype controls omitted; accounts/data/service unchanged. Development framework indicator remains in this local preview.",
+      "previewUrl": "http://127.0.0.1:43351/sign-in"
+    }
+  }
+}

@@ -1,8 +1,10 @@
 import { headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { formatPrice } from "@/contracts/staff-catalog";
 import { runtimeAuth } from "@/server/auth/runtime";
 import { staffCatalog } from "@/server/staff-catalog";
+import { StaffFrame } from "../staff-frame";
 import { AvailabilityControl } from "./availability-controls";
 
 export default async function CatalogPage({
@@ -27,18 +29,22 @@ export default async function CatalogPage({
     if (result.status === 401) redirect("/sign-in");
     if (result.status === 403) redirect("/access-denied");
     return (
-      <main>
+      <StaffFrame section="catalog">
         <h1>Staff catalog</h1>
         <p role="alert">
           {result.status === 400
             ? "This catalog page is not valid. Start again."
             : "Catalog is temporarily unavailable. Try again later."}
         </p>
-        <a href="/dashboard/catalog">Start again</a>
+        <Link href="/dashboard/catalog" prefetch={false}>
+          Start again
+        </Link>
         <p>
-          <a href="/dashboard">Back to dashboard</a>
+          <Link href="/dashboard" prefetch={false}>
+            Back to dashboard
+          </Link>
         </p>
-      </main>
+      </StaffFrame>
     );
   }
   const { items, restaurant, next_cursor } = result.catalog.data;
@@ -46,14 +52,25 @@ export default async function CatalogPage({
   if (query.has("limit")) next.set("limit", query.get("limit") ?? "50");
   if (next_cursor !== null) next.set("cursor", next_cursor);
   return (
-    <main>
-      <h1>Staff catalog</h1>
-      <p>Restaurant is {restaurant.open ? "open" : "closed"}.</p>
-      <AvailabilityControl
-        target={{ kind: "restaurant" }}
-        version={restaurant.version}
-        value={restaurant.open}
-      />
+    <StaffFrame section="catalog">
+      <header className="page-header">
+        <p className="eyebrow">Catalog</p>
+        <h1>Staff catalog</h1>
+        <p>Review the current menu and manage availability.</p>
+      </header>
+      <div className="panel restaurant-panel">
+        <div>
+          <h2>Restaurant availability</h2>
+          <p>Restaurant is {restaurant.open ? "open" : "closed"}.</p>
+        </div>
+        <div className="catalog-controls">
+          <AvailabilityControl
+            target={{ kind: "restaurant" }}
+            version={restaurant.version}
+            value={restaurant.open}
+          />
+        </div>
+      </div>
       <h2>Current page</h2>
       <p>
         Showing {items.length} items on this page. Availability may change
@@ -62,32 +79,43 @@ export default async function CatalogPage({
       {items.length === 0 ? (
         <p>The menu is empty.</p>
       ) : (
-        <ul>
+        <ul className="catalog-items">
           {items.map((item) => (
             <li key={item.id}>
-              <h3>{item.name}</h3>
-              <p>{formatPrice(item.price)}</p>
-              <p>{item.available ? "Available" : "Unavailable"}</p>
-              <AvailabilityControl
-                target={{ kind: "item", id: item.id }}
-                version={item.version}
-                value={item.available}
-              />
+              <h3 id={`catalog-item-${item.id}`}>{item.name}</h3>
+              <p className="price">{formatPrice(item.price)}</p>
+              <p className="availability-state">
+                {item.available ? "Available" : "Unavailable"}
+              </p>
+              <div className="catalog-controls">
+                <AvailabilityControl
+                  target={{ kind: "item", id: item.id }}
+                  labelledBy={`catalog-item-${item.id}`}
+                  version={item.version}
+                  value={item.available}
+                />
+              </div>
             </li>
           ))}
         </ul>
       )}
       <nav aria-label="Catalog pagination">
         {next_cursor !== null ? (
-          <a href={`/dashboard/catalog?${next}`}>Next page</a>
+          <Link href={`/dashboard/catalog?${next}`} prefetch={false}>
+            Next page
+          </Link>
         ) : (
           <p>End of menu.</p>
         )}
         <p>
-          <a href="/dashboard/catalog">Start again</a>
+          <Link href="/dashboard/catalog" prefetch={false}>
+            Start again
+          </Link>
         </p>
       </nav>
-      <a href="/dashboard">Back to dashboard</a>
-    </main>
+      <Link href="/dashboard" prefetch={false}>
+        Back to dashboard
+      </Link>
+    </StaffFrame>
   );
 }

@@ -1,0 +1,27 @@
+{
+  "title": "Restaurant-ready sign in",
+  "brief": "Design-only response to the user's rejection of the developer-looking sign-in screenshot. Audience: restaurant staff. Three structurally different hospitality-facing directions using the extracted project palette. Replace generated/local/setup language with clear restaurant-facing copy; preserve email/password entry, generic error feedback and accessible controls. Include default/error/loading and light/dark previews. All sample menu content is fictional, no account calls, real credentials, unsupported signup/SSO/reset flows, external assets or live app changes. The Service wordmark is a proposed presentation of the existing Service desk identity. Preview controls and mock submission code are design-only (data-preview-only): exclude them from any live implementation. A future implementation must retain the existing real sign-in action, field validation and route-local Suspense, not copy the prototype's dialog form method or simulated outcomes. Recommend The pass.",
+  "artboards": [
+    {
+      "file": "01-the-pass.html",
+      "title": "The pass — recommended",
+      "tradeoff": "A confident hospitality identity and a focused sign-in area; the editorial illustration gives way to the form on mobile.",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "02-the-host.html",
+      "title": "The host",
+      "tradeoff": "Quiet, lightweight and directly focused on the form at every screen size; less distinctive storytelling than the split-screen direction.",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "03-the-counter.html",
+      "title": "The counter",
+      "tradeoff": "A tangible menu preview makes the product's purpose clear; the more informative desktop composition is busier and collapses to a compact introduction on mobile.",
+      "width": 1440,
+      "height": 1000
+    }
+  ]
+}

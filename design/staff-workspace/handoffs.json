@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "01-sidebar.html",
+  "handoffs": {
+    "01-sidebar.html": {
+      "status": "implemented",
+      "queued": true,
+      "sentAt": "2026-10-28T03:55:14.594Z",
+      "startedAt": "2026-10-28T15:00:51.632Z",
+      "implementedAt": "2026-10-28T15:34:10.286Z",
+      "feature": "odd/tasks/staff-frontend.md",
+      "note": "Implemented in the real existing Next staff stack. One complete real Next/Better Auth/Go/PostgreSQL acceptance run passed (exit0,37s), including four anonymous cases, authenticated dashboard/catalog navigation, 320px fit and 44px targets, genuine Tab→skip/Enter→main, prices/pagination/availability/conflict/retry/isolation/outage checks. All11sourcehashes unchanged during run. Receipts backend/.cache/tmp/staff-acceptance-ready-1Qqkno/. Prior failures retained; final change is test-only rendered-readiness waits, no direct focus or weakened assertions. Manual screen-reader speech/pixel visual comparison not performed; no production-readiness claim. Harness finished cleanup; no standalone preview app running, so no preview URL supplied. No commits/ref changes/integration."
+    }
+  }
+}

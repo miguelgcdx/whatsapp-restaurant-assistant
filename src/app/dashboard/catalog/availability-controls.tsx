@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import type { AvailabilityTarget } from "../../../contracts/staff-availability.ts";
 import {
   beginIntent,
@@ -11,7 +11,12 @@ import {
   settleIntent,
 } from "./availability-intent.ts";
 
-type Props = { target: AvailabilityTarget; version: string; value: boolean };
+type Props = {
+  target: AvailabilityTarget;
+  version: string;
+  value: boolean;
+  labelledBy?: string;
+};
 export function AvailabilityControl(props: Props) {
   // Defer browser-only hooks to hydration. SSR keeps an inert, accessible control
   // and never needs a router context, UUID, token or serialized session.
@@ -25,8 +30,9 @@ export function AvailabilityControl(props: Props) {
     </button>
   );
 }
-function InteractiveControl({ target, version, value }: Props) {
+function InteractiveControl({ target, version, value, labelledBy }: Props) {
   const router = useRouter();
+  const feedbackId = useId();
   const [state, setState] = useState<IntentState>({ kind: "idle" });
   const [refreshing, startRefresh] = useTransition();
   const inFlight = useRef(false);
@@ -84,16 +90,20 @@ function InteractiveControl({ target, version, value }: Props) {
   }[state.kind];
   return (
     <section
+      aria-labelledby={labelledBy}
       aria-label={
-        target.kind === "item"
-          ? "Item availability control"
-          : "Restaurant availability control"
+        labelledBy
+          ? undefined
+          : target.kind === "item"
+            ? "Item availability control"
+            : "Restaurant availability control"
       }
       aria-busy={pending || refreshing}
     >
       {state.kind !== "denied" && (
         <button
           type="button"
+          aria-describedby={feedbackId}
           disabled={
             pending ||
             refreshing ||
@@ -110,7 +120,17 @@ function InteractiveControl({ target, version, value }: Props) {
           {label}
         </button>
       )}
-      {feedback && <output>{feedback}</output>}
+      <output
+        id={feedbackId}
+        aria-labelledby={labelledBy}
+        aria-label={
+          !labelledBy && target.kind === "restaurant"
+            ? "Restaurant availability feedback"
+            : undefined
+        }
+      >
+        {feedback}
+      </output>
       {state.kind === "uncertain" && (
         <button type="button" onClick={() => void send(retryIntent(state))}>
           Retry same request

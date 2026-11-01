@@ -4,6 +4,7 @@ import { getMigrations } from "better-auth/db/migration";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import * as route from "../../src/app/api/staff/catalog/route.ts";
+import CatalogError from "../../src/app/dashboard/catalog/error.tsx";
 import CatalogPage from "../../src/app/dashboard/catalog/page.tsx";
 import Dashboard from "../../src/app/dashboard/page.tsx";
 import { databaseTarget } from "../../src/server/auth/config.ts";
@@ -106,6 +107,18 @@ afterAll(async () => {
   await owner?.pool.end();
   await pg?.close();
 });
+function expectStaffFrame(html: string, active: "Overview" | "Catalog") {
+  expect(html).toContain('<nav aria-label="Staff navigation">');
+  const path = active === "Overview" ? "/dashboard" : "/dashboard/catalog";
+  const activeAnchor = html.match(new RegExp(`<a\\b[^>]*>${active}</a>`))?.[0];
+  expect(activeAnchor).toBeDefined();
+  expect(activeAnchor).toContain(`href="${path}"`);
+  expect(activeAnchor).toContain('aria-current="page"');
+  expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+  expect(html).toContain('href="#main-content">Skip to content</a>');
+  expect(html).toContain('<main id="main-content" tabindex="-1"');
+  expect(html.match(/<main\b/g)).toHaveLength(1);
+}
 const invoke = (
   suffix = "",
   headers: HeadersInit = { cookie },
@@ -287,6 +300,7 @@ it("renders only the current configured-currency page with escaped authored name
   const html = renderToStaticMarkup(
     await CatalogPage({ searchParams: Promise.resolve({ limit: "1" }) }),
   );
+  expectStaffFrame(html, "Catalog");
   expect(html).toContain("KWD 9223372036854775.807");
   expect(html).toContain("Restaurant is closed.");
   expect(html).toContain("Unavailable");
@@ -301,6 +315,7 @@ it("renders only the current configured-currency page with escaped authored name
   expect(failed).toContain(
     "Catalog is temporarily unavailable. Try again later.",
   );
+  expectStaffFrame(failed, "Catalog");
   expect(failed).not.toContain("fictional");
   expect(failed).not.toContain("private upstream");
   const invalid = renderToStaticMarkup(
@@ -311,6 +326,7 @@ it("renders only the current configured-currency page with escaped authored name
 });
 it("exports fail-closed public route methods and preserves the signed-in dashboard confirmation/sign-out", async () => {
   const html = renderToStaticMarkup(await Dashboard());
+  expectStaffFrame(html, "Overview");
   expect(html).toContain("Staff dashboard");
   expect(html).toContain("Signed in as Catalog Staff.");
   expect(html).toContain("Staff access confirmed.");
@@ -319,6 +335,7 @@ it("exports fail-closed public route methods and preserves the signed-in dashboa
   const empty = renderToStaticMarkup(
     await CatalogPage({ searchParams: Promise.resolve({}) }),
   );
+  expectStaffFrame(empty, "Catalog");
   expect(empty).toContain("The menu is empty.");
   expect(empty).toContain("Restaurant is open.");
   expect(empty).toContain("End of menu.");
@@ -354,6 +371,16 @@ it("exports fail-closed public route methods and preserves the signed-in dashboa
     "Catalog is temporarily unavailable.",
   );
   boundary.config = { auth: owner.auth, origin, apiOrigin };
+});
+it("keeps catalog error fallback in the same navigable frame", () => {
+  const error = renderToStaticMarkup(CatalogError());
+  expectStaffFrame(error, "Catalog");
+  expect(error).toContain('role="alert"');
+  expect(error).toContain(
+    "Catalog is temporarily unavailable. Try again later.",
+  );
+  expect(error).toContain('href="/dashboard/catalog">Start again</a>');
+  expect(error).toContain('href="/dashboard">Back to dashboard</a>');
 });
 it("authoritative logout blocks continuation before the upstream read", async () => {
   const headers = new Headers({ cookie, origin });
